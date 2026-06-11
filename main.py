@@ -1,9 +1,6 @@
 import discord
 from discord.ext import commands
-import json
 import os
-
-TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -11,134 +8,114 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ----------------------------
-# BANCO DE LOGS POR SERVIDOR
-# ----------------------------
-LOG_FILE = "logs.json"
+# ===== CONFIG =====
+log_channel_id = None
+commands_enabled = True
+warns = {}  # {user_id: [warnings]}
 
-def load_logs():
-    try:
-        with open(LOG_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
-
-def save_logs(data):
-    with open(LOG_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-logs = load_logs()
-
-def get_log_channel(guild_id):
-    return logs.get(str(guild_id))
-
-def set_log_channel(guild_id, channel_id):
-    logs[str(guild_id)] = channel_id
-    save_logs(logs)
-
-# ----------------------------
-# LOG FUNCTION
-# ----------------------------
+# ===== UTIL =====
 async def send_log(guild, text):
-    channel_id = get_log_channel(guild.id)
-    if not channel_id:
-        return
+    if log_channel_id:
+        channel = guild.get_channel(log_channel_id)
+        if channel:
+            await channel.send(text)
 
-    channel = guild.get_channel(int(channel_id))
-    if channel:
-        await channel.send(text)
+def is_admin():
+    async def predicate(ctx):
+        return ctx.author.guild_permissions.administrator
+    return commands.check(predicate)
 
-# ----------------------------
-# READY
-# ----------------------------
+# ===== EVENTS =====
 @bot.event
 async def on_ready():
     print(f"Logado como {bot.user}")
 
-# ----------------------------
-# SET LOG CHANNEL
-# ----------------------------
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def setlog(ctx, channel: discord.TextChannel):
-    set_log_channel(ctx.guild.id, channel.id)
-    await ctx.send(f"📌 Canal de log definido: {channel.mention}")
+@bot.event
+async def on_message(message):
+    global commands_enabled
+    if not commands_enabled:
+        return
+    await bot.process_commands(message)
 
-# ----------------------------
-# PING
-# ----------------------------
+# ===== BASIC =====
 @bot.command()
 async def ping(ctx):
-    await ctx.send("pong")
+    await ctx.send("Pong!")
 
-# ----------------------------
-# BAN
-# ----------------------------
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def ban(ctx, member: discord.Member, *, reason="sem motivo"):
-    await member.ban(reason=reason)
-    await ctx.send("Usuário banido.")
-
-    await send_log(ctx.guild, f"🔨 BAN: {member} | {reason}")
-
-# ----------------------------
-# KICK
-# ----------------------------
+# ===== MODERATION =====
 @bot.command()
 @commands.has_permissions(kick_members=True)
-async def kick(ctx, member: discord.Member, *, reason="sem motivo"):
+async def kick(ctx, member: discord.Member, *, reason=None):
     await member.kick(reason=reason)
-    await ctx.send("Usuário expulso.")
+    await ctx.send(f"{member} expulso.")
+    await send_log(ctx.guild, f"KICK: {member} | {reason}")
 
-    await send_log(ctx.guild, f"👢 KICK: {member} | {reason}")
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def ban(ctx, member: discord.Member, *, reason=None):
+    await member.ban(reason=reason)
+    await ctx.send(f"{member} banido.")
+    await send_log(ctx.guild, f"BAN: {member} | {reason}")
 
-# ----------------------------
-# WARN
-# ----------------------------
-WARN_FILE = "warns.json"
-
-def load_warns():
-    try:
-        with open(WARN_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
-
-def save_warns(data):
-    with open(WARN_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-warns = load_warns()
+@bot.command()
+@commands.has_permissions(moderate_members=True)
+async def mute(ctx, member: discord.Member, minutes: int):
+    await member.timeout(discord.utils.utcnow() + discord.timedelta(minutes=minutes))
+    await ctx.send(f"{member} mutado por {minutes} min.")
 
 @bot.command()
 async def warn(ctx, member: discord.Member, *, reason="sem motivo"):
-    uid = str(member.id)
-
-    warns.setdefault(uid, []).append(reason)
-    save_warns(warns)
-
+    warns.setdefault(member.id, []).append(reason)
+    await member.send(f"Você recebeu warn: {reason}")
     await ctx.send("Warn aplicado.")
 
-    try:
-        await member.send(f"⚠️ Você recebeu warn: {reason}")
-    except:
-        pass
-
-    await send_log(ctx.guild, f"⚠️ WARN: {member} | {reason}")
-
-# ----------------------------
-# VER WARNS
-# ----------------------------
+# ===== ROLES =====
 @bot.command()
-async def warns(ctx, member: discord.Member):
-    uid = str(member.id)
-    data = warns.get(uid, [])
+@commands.has_permissions(manage_roles=True)
+async def createrole(ctx, *, name):
+    role = await ctx.guild.create_role(name=name)
+    await ctx.send(f"Cargo criado: {role.name}")
 
-    if not data:
-        return await ctx.send("Sem warns.")
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def giverole(ctx, member: discord.Member, role: discord.Role):
+    await member.add_roles(role)
+    await ctx.send(f"{member} recebeu {role.name}")
 
-    await ctx.send("\n".join([f"{i+1}. {w}" for i, w in enumerate(data)]))
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def removerole(ctx, member: discord.Member, role: discord.Role):
+    await member.remove_roles(role)
+    await ctx.send(f"{member} perdeu {role.name}")
 
-# ----------------------------
-bot.run(TOKEN)
+# ===== CHANNELS =====
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def createchannel(ctx, *, name):
+    ch = await ctx.guild.create_text_channel(name)
+    await ctx.send(f"Canal criado: {ch.name}")
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def renamechannel(ctx, channel: discord.TextChannel, *, name):
+    await channel.edit(name=name)
+    await ctx.send("Canal renomeado.")
+
+# ===== LOG SYSTEM =====
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setlog(ctx, channel: discord.TextChannel):
+    global log_channel_id
+    log_channel_id = channel.id
+    await ctx.send(f"Log setado em {channel.name}")
+
+# ===== TOGGLE =====
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def toggle(ctx):
+    global commands_enabled
+    commands_enabled = not commands_enabled
+    await ctx.send(f"Comandos: {'ON' if commands_enabled else 'OFF'}")
+
+# ===== RUN =====
+bot.run(os.getenv("TOKEN"))
