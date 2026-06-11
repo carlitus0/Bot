@@ -299,6 +299,57 @@ async def setlogch(
         f"Logs configurados para {channel.mention}"
 )
 
+@bot.command()
+@commands.has_permissions(
+    moderate_members=True
+)
+async def mute(
+    ctx,
+    member: discord.Member,
+    minutos: int,
+    *,
+    motivo="Sem motivo"
+):
 
+    import datetime
+
+    await member.timeout(
+        datetime.timedelta(
+            minutes=minutos
+        ),
+        reason=motivo
+    )
+
+    await ctx.send(
+        f"{member.mention} mutado por {minutos} minutos."
+    )
+
+    await send_log(
+        ctx.guild,
+        f"MUTE | {member} | {minutos}min | {motivo}"
+    )
+
+
+@bot.command()
+@commands.has_permissions(
+    moderate_members=True
+)
+async def unmute(
+    ctx,
+    member: discord.Member
+):
+
+    await member.timeout(
+        None
+    )
+
+    await ctx.send(
+        f"{member.mention} desmutado."
+    )
+
+    await send_log(
+        ctx.guild,
+        f"UNMUTE | {member}"
+    )
 
 bot.run(TOKEN)
