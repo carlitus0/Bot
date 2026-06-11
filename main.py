@@ -1,16 +1,16 @@
-print("================================")
-print("ESTOU EXECUTANDO O MAIN NOVO")
-print("================================")
+print("V67")
 
-
-import discord
-from discord.ext import commands
 import os
+import discord
+
 from dotenv import load_dotenv
+from discord.ext import commands
 
 import db
-from panel import PanelView
 import config
+
+from panel import PanelView
+from tickets import TicketView
 
 load_dotenv()
 
@@ -24,75 +24,112 @@ bot = commands.Bot(
 )
 
 
-# ---------------- START ----------------
 @bot.event
 async def on_ready():
+
     await db.init()
+
     print(f"Logado como {bot.user}")
-    print("COMANDOS:", [c.name for c in bot.commands])
 
 
-# ---------------- LOG ----------------
-async def log(guild, msg):
-    channel = guild.get_channel(config.LOG_CHANNEL_ID)
+async def send_log(guild,msg):
+
+    channel = guild.get_channel(
+        config.LOG_CHANNEL_ID
+    )
 
     if channel:
         await channel.send(msg)
 
 
-# ---------------- PING ----------------
 @bot.command()
 async def ping(ctx):
-    await ctx.send("pong 🟢")
+
+    await ctx.send(
+        f"Pong! {round(bot.latency*1000)}ms"
+    )
 
 
-# ---------------- BAN ----------------
 @bot.command()
-@commands.has_permissions(ban_members=True)
-async def ban(ctx, member: discord.Member, *, reason="sem motivo"):
+@commands.has_permissions(
+    ban_members=True
+)
+async def ban(
+    ctx,
+    member: discord.Member,
+    *,
+    reason="Sem motivo"
+):
+
     await member.ban(reason=reason)
-    await ctx.send(f"{member} banido")
-    await log(ctx.guild, f"BAN: {member} | {reason}")
+
+    await ctx.send(
+        f"{member} foi banido."
+    )
+
+    await send_log(
+        ctx.guild,
+        f"BAN | {member} | {reason}"
+    )
 
 
-# ---------------- KICK ----------------
 @bot.command()
-@commands.has_permissions(kick_members=True)
-async def kick(ctx, member: discord.Member, *, reason="sem motivo"):
+@commands.has_permissions(
+    kick_members=True
+)
+async def kick(
+    ctx,
+    member: discord.Member,
+    *,
+    reason="Sem motivo"
+):
+
     await member.kick(reason=reason)
-    await ctx.send(f"{member} expulso")
-    await log(ctx.guild, f"KICK: {member} | {reason}")
+
+    await ctx.send(
+        f"{member} expulso."
+    )
+
+    await send_log(
+        ctx.guild,
+        f"KICK | {member} | {reason}"
+    )
 
 
-# ---------------- WARN ----------------
 @bot.command()
-async def warn(ctx, member: discord.Member, *, reason="sem motivo"):
+async def warn(
+    ctx,
+    member: discord.Member,
+    *,
+    reason="Sem motivo"
+):
+
     await db.add_warn(
         ctx.guild.id,
         member.id,
         reason
     )
 
-    await ctx.send(
-        f"{member} recebeu warn"
-    )
-
     try:
+
         await member.send(
-            f"Você recebeu um warn.\nMotivo: {reason}"
+            f"Você recebeu warn: {reason}"
         )
+
     except:
         pass
 
-    await log(
-        ctx.guild,
-        f"WARN: {member} | {reason}"
+    await ctx.send(
+        "Warn aplicado."
     )
 
 
-# ---------------- WARNS ----------------
 @bot.command()
-async def warns(ctx, member: discord.Member):
+async def warns(
+    ctx,
+    member: discord.Member
+):
+
     warns = await db.get_warns(
         ctx.guild.id,
         member.id
@@ -103,33 +140,135 @@ async def warns(ctx, member: discord.Member):
     )
 
 
-# ---------------- PANEL ----------------
 @bot.command()
-@commands.has_permissions(administrator=True)
+@commands.has_permissions(
+    administrator=True
+)
 async def panel(ctx):
+
     await ctx.send(
         "Painel Staff",
         view=PanelView()
     )
 
 
-# ---------------- ERROR ----------------
+@bot.command()
+@commands.has_permissions(
+    administrator=True
+)
+async def setticket(ctx):
+
+    channel = bot.get_channel(
+        config.TICKET_CHANNEL_ID
+    )
+
+    await channel.send(
+        "Clique para abrir ticket",
+        view=TicketView()
+    )
+
+    await ctx.send(
+        "Painel enviado."
+    )
+
+
+@bot.command()
+@commands.has_permissions(
+    manage_roles=True
+)
+async def addrole(
+    ctx,
+    member: discord.Member,
+    role: discord.Role
+):
+
+    await member.add_roles(role)
+
+    await ctx.send(
+        "Cargo adicionado."
+    )
+
+
+@bot.command()
+@commands.has_permissions(
+    manage_roles=True
+)
+async def removerole(
+    ctx,
+    member: discord.Member,
+    role: discord.Role
+):
+
+    await member.remove_roles(role)
+
+    await ctx.send(
+        "Cargo removido."
+    )
+
+
+@bot.command()
+@commands.has_permissions(
+    manage_channels=True
+)
+async def lock(ctx):
+
+    await ctx.channel.set_permissions(
+        ctx.guild.default_role,
+        send_messages=False
+    )
+
+    await ctx.send(
+        "Canal bloqueado."
+    )
+
+
+@bot.command()
+@commands.has_permissions(
+    manage_channels=True
+)
+async def unlock(ctx):
+
+    await ctx.channel.set_permissions(
+        ctx.guild.default_role,
+        send_messages=True
+    )
+
+    await ctx.send(
+        "Canal desbloqueado."
+    )
+
+
+@bot.command()
+@commands.has_permissions(
+    manage_messages=True
+)
+async def clear(
+    ctx,
+    quantidade: int
+):
+
+    await ctx.channel.purge(
+        limit=quantidade+1
+    )
+
+
 @bot.event
-async def on_command_error(ctx, error):
-    print("ERRO:", error)
+async def on_command_error(
+    ctx,
+    error
+):
 
     if isinstance(
         error,
         commands.CommandNotFound
     ):
-        await ctx.send(
-            "Comando não encontrado."
-        )
+        return
 
-    elif isinstance(
+    if isinstance(
         error,
         commands.MissingPermissions
     ):
+
         await ctx.send(
             "Sem permissão."
         )
