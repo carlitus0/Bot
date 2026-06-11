@@ -4,7 +4,12 @@ DB = "bot.db"
 
 async def init():
     async with aiosqlite.connect(DB) as db:
-
+await db.execute("""
+CREATE TABLE IF NOT EXISTS guild_config(
+    guild_id INTEGER PRIMARY KEY,
+    log_channel INTEGER
+)
+""")
         await db.execute("""
         CREATE TABLE IF NOT EXISTS warns(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
