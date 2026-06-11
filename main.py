@@ -1,7 +1,8 @@
 import discord
 from discord.ext import commands
-import sqlite3
 import os
+import json
+from datetime import timedelta
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -9,127 +10,150 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ---------------- DATABASE ----------------
-conn = sqlite3.connect("bot.db")
-cursor = conn.cursor()
+TOKEN = os.getenv("TOKEN")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS warns (
-    user_id INTEGER,
-    guild_id INTEGER,
-    count INTEGER
-)
-""")
+LOG_CHANNEL_ID = 1514512718923567254
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS settings (
-    guild_id INTEGER,
-    command TEXT,
-    enabled INTEGER
-)
-""")
+WARN_FILE = "warns.json"
+STATE_FILE = "state.json"
 
-conn.commit()
+# ===== LOADERS =====
+def load_json(file):
+    try:
+        with open(file, "r") as f:
+            return json.load(f)
+    except:
+        return {}
 
-# ---------------- HELPERS ----------------
-def command_enabled(guild_id, command):
-    cursor.execute("SELECT enabled FROM settings WHERE guild_id=? AND command=?", (guild_id, command))
-    row = cursor.fetchone()
-    return True if not row else bool(row[0])
+def save_json(file, data):
+    with open(file, "w") as f:
+        json.dump(data, f, indent=2)
 
-async def log(ctx, text):
-    channel = discord.utils.get(ctx.guild.text_channels, name="mod-log")
+warns = load_json(WARN_FILE)
+state = load_json(STATE_FILE)
+
+# ===== STATE CONTROL (ENABLE/DISABLE COMMANDS) =====
+def is_enabled(guild_id):
+    gid = str(guild_id)
+    return state.get(gid, {}).get("enabled", True)
+
+def set_enabled(guild_id, value: bool):
+    gid = str(guild_id)
+    if gid not in state:
+        state[gid] = {}
+    state[gid]["enabled"] = value
+    save_json(STATE_FILE, state)
+
+# ===== LOG =====
+async def log(guild, text):
+    channel = guild.get_channel(LOG_CHANNEL_ID)
     if channel:
         await channel.send(text)
 
-# ---------------- READY ----------------
+# ===== CHECK IF DISABLED =====
+def check_enabled():
+    async def predicate(ctx):
+        if not is_enabled(ctx.guild.id):
+            await ctx.send("❌ Comandos desativados neste servidor.")
+            return False
+        return True
+    return commands.check(predicate)
+
+# ===== READY =====
 @bot.event
 async def on_ready():
     print(f"Logado como {bot.user}")
 
-# ---------------- PING ----------------
+# ===== PING =====
 @bot.command()
+@check_enabled()
 async def ping(ctx):
-    if not command_enabled(ctx.guild.id, "ping"):
-        return
-    await ctx.send("nigga")
+    await ctx.send("Pong!")
 
-# ---------------- KICK ----------------
-@bot.command()
-@commands.has_permissions(kick_members=True)
-async def kick(ctx, member: discord.Member, *, reason=None):
-    if not command_enabled(ctx.guild.id, "kick"):
-        return await ctx.send("Comando desativado.")
-
-    await member.kick(reason=reason)
-    await ctx.send(f"{member} foi kickado.")
-    await log(ctx, f"KICK: {member} | {reason}")
-
-# ---------------- BAN ----------------
+# ===== BAN =====
 @bot.command()
 @commands.has_permissions(ban_members=True)
-async def ban(ctx, member: discord.Member, *, reason=None):
-    if not command_enabled(ctx.guild.id, "ban"):
-        return await ctx.send("Comando desativado.")
-
+@check_enabled()
+async def ban(ctx, member: discord.Member, *, reason="sem motivo"):
     await member.ban(reason=reason)
-    await ctx.send(f"{member} foi banido.")
-    await log(ctx, f"BAN: {member} | {reason}")
+    await ctx.send(f"{member} banido.")
+    await log(ctx.guild, f"BAN: {member} | {reason}")
 
-# ---------------- MUTE ----------------
-@bot.command()
-@commands.has_permissions(moderate_members=True)
-async def mute(ctx, member: discord.Member, minutes: int, *, reason=None):
-    if not command_enabled(ctx.guild.id, "mute"):
-        return await ctx.send("Comando desativado.")
-
-    until = discord.utils.utcnow() + discord.timedelta(minutes=minutes)
-    await member.edit(timed_out_until=until, reason=reason)
-
-    await ctx.send(f"{member} mutado por {minutes} minutos.")
-    await log(ctx, f"MUTE: {member} | {minutes} min | {reason}")
-
-# ---------------- WARN ----------------
+# ===== KICK =====
 @bot.command()
 @commands.has_permissions(kick_members=True)
-async def warn(ctx, member: discord.Member, *, reason=None):
-    if not command_enabled(ctx.guild.id, "warn"):
-        return await ctx.send("Comando desativado.")
+@check_enabled()
+async def kick(ctx, member: discord.Member, *, reason="sem motivo"):
+    await member.kick(reason=reason)
+    await ctx.send(f"{member} expulso.")
+    await log(ctx.guild, f"KICK: {member} | {reason}")
 
-    cursor.execute("SELECT count FROM warns WHERE user_id=? AND guild_id=?", (member.id, ctx.guild.id))
-    row = cursor.fetchone()
+# ===== MUTE =====
+@bot.command()
+@commands.has_permissions(moderate_members=True)
+@check_enabled()
+async def mute(ctx, member: discord.Member, minutes: int, *, reason="sem motivo"):
+    await member.timeout(timedelta(minutes=minutes), reason=reason)
+    await ctx.send(f"{member} mutado {minutes} min.")
+    await log(ctx.guild, f"MUTE: {member} | {minutes} min | {reason}")
 
-    if row:
-        count = row[0] + 1
-        cursor.execute("UPDATE warns SET count=? WHERE user_id=? AND guild_id=?", (count, member.id, ctx.guild.id))
-    else:
-        count = 1
-        cursor.execute("INSERT INTO warns VALUES (?, ?, ?)", (member.id, ctx.guild.id, count))
+# ===== WARN =====
+@bot.command()
+@check_enabled()
+async def warn(ctx, member: discord.Member, *, reason="sem motivo"):
+    uid = str(member.id)
 
-    conn.commit()
+    if uid not in warns:
+        warns[uid] = []
 
+    warns[uid].append(reason)
+    save_json(WARN_FILE, warns)
+
+    await ctx.send(f"{member} recebeu warn.")
     try:
-        await member.send(f"Você recebeu warn em {ctx.guild.name}. Motivo: {reason}")
+        await member.send(f"⚠️ Warn: {reason}")
     except:
         pass
 
-    await ctx.send(f"{member} recebeu warn ({count}).")
-    await log(ctx, f"WARN: {member} | {reason}")
+    await log(ctx.guild, f"WARN: {member} | {reason}")
 
-# ---------------- ENABLE / DISABLE ----------------
+# ===== WARN COUNT =====
+@bot.command()
+@check_enabled()
+async def warns(ctx, member: discord.Member):
+    uid = str(member.id)
+    count = len(warns.get(uid, []))
+    await ctx.send(f"{member} tem {count} warns.")
+
+# ===== TOGGLE SYSTEM (TROLL MODE) =====
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def disable(ctx, command):
-    cursor.execute("INSERT OR REPLACE INTO settings VALUES (?, ?, 0)", (ctx.guild.id, command))
-    conn.commit()
-    await ctx.send(f"Comando {command} desativado.")
+async def disable(ctx):
+    set_enabled(ctx.guild.id, False)
+    await ctx.send("❌ Comandos desativados.")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def enable(ctx, command):
-    cursor.execute("INSERT OR REPLACE INTO settings VALUES (?, ?, 1)", (ctx.guild.id, command))
-    conn.commit()
-    await ctx.send(f"Comando {command} ativado.")
+async def enable(ctx):
+    set_enabled(ctx.guild.id, True)
+    await ctx.send("✅ Comandos ativados.")
 
-# ---------------- RUN ----------------
-bot.run(os.getenv("TOKEN"))
+# ===== HELP =====
+@bot.command()
+async def modhelp(ctx):
+    await ctx.send("""
+📌 Comandos:
+!ping
+!ban @user motivo
+!kick @user motivo
+!mute @user minutos motivo
+!warn @user motivo
+!warns @user
+
+⚙️ Admin:
+!enable
+!disable
+""")
+
+# ===== RUN =====
+bot.run(TOKEN)
