@@ -12,7 +12,11 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=config.PREFIX, intents=intents)
+
+bot = commands.Bot(
+    command_prefix=config.PREFIX,
+    intents=intents
+)
 
 
 # ---------------- START ----------------
@@ -20,11 +24,13 @@ bot = commands.Bot(command_prefix=config.PREFIX, intents=intents)
 async def on_ready():
     await db.init()
     print(f"Logado como {bot.user}")
+    print("COMANDOS:", [c.name for c in bot.commands])
 
 
 # ---------------- LOG ----------------
 async def log(guild, msg):
     channel = guild.get_channel(config.LOG_CHANNEL_ID)
+
     if channel:
         await channel.send(msg)
 
@@ -56,36 +62,72 @@ async def kick(ctx, member: discord.Member, *, reason="sem motivo"):
 # ---------------- WARN ----------------
 @bot.command()
 async def warn(ctx, member: discord.Member, *, reason="sem motivo"):
-    await db.add_warn(ctx.guild.id, member.id, reason)
-    await ctx.send(f"{member} recebeu warn")
+    await db.add_warn(
+        ctx.guild.id,
+        member.id,
+        reason
+    )
+
+    await ctx.send(
+        f"{member} recebeu warn"
+    )
 
     try:
-        await member.send(f"Você levou warn: {reason}")
+        await member.send(
+            f"Você recebeu um warn.\nMotivo: {reason}"
+        )
     except:
         pass
 
-    await log(ctx.guild, f"WARN: {member} | {reason}")
+    await log(
+        ctx.guild,
+        f"WARN: {member} | {reason}"
+    )
 
 
 # ---------------- WARNS ----------------
 @bot.command()
 async def warns(ctx, member: discord.Member):
-    warns = await db.get_warns(ctx.guild.id, member.id)
-    await ctx.send(f"{member} tem {len(warns)} warns")
+    warns = await db.get_warns(
+        ctx.guild.id,
+        member.id
+    )
+
+    await ctx.send(
+        f"{member} possui {len(warns)} warns."
+    )
 
 
-# ---------------- PAINEL ----------------
+# ---------------- PANEL ----------------
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def panel(ctx):
-    await ctx.send("Painel de staff:", view=PanelView())
+    await ctx.send(
+        "Painel Staff",
+        view=PanelView()
+    )
 
 
 # ---------------- ERROR ----------------
 @bot.event
 async def on_command_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send("Sem permissão")
+    print("ERRO:", error)
+
+    if isinstance(
+        error,
+        commands.CommandNotFound
+    ):
+        await ctx.send(
+            "Comando não encontrado."
+        )
+
+    elif isinstance(
+        error,
+        commands.MissingPermissions
+    ):
+        await ctx.send(
+            "Sem permissão."
+        )
 
 
 bot.run(TOKEN)
