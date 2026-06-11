@@ -1,8 +1,5 @@
-print("new v")
-
 import os
 import discord
-
 import io
 import contextlib
 import traceback
@@ -48,7 +45,7 @@ async def send_log(guild, msg):
         await channel.send(msg)
 
 
-# ---------------- EXEC (DEV ONLY) ----------------
+# ---------------- EXEC (DEV TOOL) ----------------
 @bot.command()
 async def exec(ctx, *, code: str):
     if ctx.author.id != OWNER_ID:
@@ -57,23 +54,26 @@ async def exec(ctx, *, code: str):
     buffer = io.StringIO()
 
     try:
+        # captura prints
         with contextlib.redirect_stdout(buffer):
             exec(
                 code,
                 {
                     "bot": bot,
                     "ctx": ctx,
-                    "__import__": __import__
+                    "__import__": __import__,
                 }
             )
 
     except Exception:
         buffer.write(traceback.format_exc())
 
-    output = buffer.getvalue().strip()
+    output = buffer.getvalue()
 
-    if not output:
-        output = "Executado sem output."
+    print("EXEC DEBUG OUTPUT:", repr(output))  # logs no Railway
+
+    if not output.strip():
+        return await ctx.send("SEM OUTPUT (código rodou mas não imprimiu nada)")
 
     await ctx.send(f"```py\n{output[:1900]}```")
 # --------------------------------------------------
@@ -88,9 +88,7 @@ async def ping(ctx):
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason="Sem motivo"):
     await member.ban(reason=reason)
-
     await ctx.send(f"{member} foi banido.")
-
     await send_log(ctx.guild, f"BAN | {member} | {reason}")
 
 
@@ -98,9 +96,7 @@ async def ban(ctx, member: discord.Member, *, reason="Sem motivo"):
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason="Sem motivo"):
     await member.kick(reason=reason)
-
     await ctx.send(f"{member} expulso.")
-
     await send_log(ctx.guild, f"KICK | {member} | {reason}")
 
 
@@ -134,7 +130,6 @@ async def setticket(ctx):
     channel = bot.get_channel(config.TICKET_CHANNEL_ID)
 
     await channel.send("Clique para abrir ticket", view=TicketView())
-
     await ctx.send("Painel enviado.")
 
 
@@ -181,9 +176,6 @@ async def on_command_error(ctx, error):
         await ctx.send("Sem permissão.")
 
 
-from logs import LogSystem
-
-
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def setlogch(ctx, channel: discord.TextChannel):
@@ -199,7 +191,6 @@ async def mute(ctx, member: discord.Member, minutos: int, *, motivo="Sem motivo"
     await member.timeout(datetime.timedelta(minutes=minutos), reason=motivo)
 
     await ctx.send(f"{member.mention} mutado por {minutos} minutos.")
-
     await send_log(ctx.guild, f"MUTE | {member} | {minutos}min | {motivo}")
 
 
@@ -207,9 +198,7 @@ async def mute(ctx, member: discord.Member, minutos: int, *, motivo="Sem motivo"
 @commands.has_permissions(moderate_members=True)
 async def unmute(ctx, member: discord.Member):
     await member.timeout(None)
-
     await ctx.send(f"{member.mention} desmutado.")
-
     await send_log(ctx.guild, f"UNMUTE | {member}")
 
 
