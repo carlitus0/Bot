@@ -1,3 +1,8 @@
+print("================================")
+print("ESTOU EXECUTANDO O MAIN NOVO")
+print("================================")
+
+
 import discord
 from discord.ext import commands
 import os
