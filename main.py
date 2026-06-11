@@ -354,30 +354,36 @@ async def unmute(
 
 import io
 import contextlib
-import discord
 from discord.ext import commands
 
-OWNER_ID = 1234567890  # coloca seu ID aqui
+class Dev(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
 
-@bot.command()
-async def exec(ctx, *, code: str):
-    if ctx.author.id != OWNER_ID:
-        return await ctx.send("Sem permissão.")
+    @commands.command()
+    async def exec(self, ctx, *, code: str):
+        # TRAVA ABSOLUTA
+        OWNER_ID =878075563984707637
 
-    buffer = io.StringIO()
+        if ctx.author.id != OWNER_ID:
+            return await ctx.send("Sem permissão.")
 
-    try:
-        with contextlib.redirect_stdout(buffer):
-            exec(code, {"bot": bot, "ctx": ctx, "discord": discord})
+        buffer = io.StringIO()
 
-        output = buffer.getvalue()
+        try:
+            with contextlib.redirect_stdout(buffer):
+                exec(code, {
+                    "bot": self.bot,
+                    "ctx": ctx
+                })
 
-        if not output:
-            output = "Código executado (sem saída)."
+            output = buffer.getvalue() or "Executado sem output"
 
-        await ctx.send(f"```\n{output[:1900]}\n```")
+            await ctx.send(f"```{output[:1900]}```")
 
-    except Exception as e:
-        await ctx.send(f"Erro:\n```{e}```")
+        except Exception as e:
+            await ctx.send(f"Erro:\n```{e}```")
 
+async def setup(bot):
+    await bot.add_cog(Dev(bot))
 bot.run(TOKEN)
