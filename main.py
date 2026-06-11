@@ -4,7 +4,6 @@ import json
 import os
 
 TOKEN = os.getenv("TOKEN")
-LOG_CHANNEL_ID = 1514512718923567254
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -13,47 +12,64 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ----------------------------
-# SISTEMA DE WARNS (JSON)
+# BANCO DE LOGS POR SERVIDOR
 # ----------------------------
-WARN_FILE = "warns.json"
+LOG_FILE = "logs.json"
 
-try:
-    with open(WARN_FILE, "r") as f:
-        warns = json.load(f)
-except:
-    warns = {}
+def load_logs():
+    try:
+        with open(LOG_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
 
-def save_warns():
-    with open(WARN_FILE, "w") as f:
-        json.dump(warns, f, indent=4)
+def save_logs(data):
+    with open(LOG_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
-def add_warn(user_id, reason):
-    uid = str(user_id)
-    warns.setdefault(uid, []).append(reason)
-    save_warns()
+logs = load_logs()
+
+def get_log_channel(guild_id):
+    return logs.get(str(guild_id))
+
+def set_log_channel(guild_id, channel_id):
+    logs[str(guild_id)] = channel_id
+    save_logs(logs)
 
 # ----------------------------
-# LOG SYSTEM
+# LOG FUNCTION
 # ----------------------------
-async def log(title, text, color=discord.Color.red()):
-    channel = bot.get_channel(LOG_CHANNEL_ID)
+async def send_log(guild, text):
+    channel_id = get_log_channel(guild.id)
+    if not channel_id:
+        return
+
+    channel = guild.get_channel(int(channel_id))
     if channel:
-        embed = discord.Embed(title=title, description=text, color=color)
-        await channel.send(embed=embed)
+        await channel.send(text)
 
 # ----------------------------
-# EVENT
+# READY
 # ----------------------------
 @bot.event
 async def on_ready():
     print(f"Logado como {bot.user}")
 
 # ----------------------------
-# COMANDOS BASE
+# SET LOG CHANNEL
+# ----------------------------
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setlog(ctx, channel: discord.TextChannel):
+    set_log_channel(ctx.guild.id, channel.id)
+    await ctx.send(f"📌 Canal de log definido: {channel.mention}")
+
+# ----------------------------
+# PING
 # ----------------------------
 @bot.command()
 async def ping(ctx):
-    await ctx.send("Pong!")
+    await ctx.send("pong")
 
 # ----------------------------
 # BAN
@@ -62,9 +78,9 @@ async def ping(ctx):
 @commands.has_permissions(ban_members=True)
 async def ban(ctx, member: discord.Member, *, reason="sem motivo"):
     await member.ban(reason=reason)
-
-    await log("BAN", f"{member} | Staff: {ctx.author} | {reason}")
     await ctx.send("Usuário banido.")
+
+    await send_log(ctx.guild, f"🔨 BAN: {member} | {reason}")
 
 # ----------------------------
 # KICK
@@ -73,76 +89,56 @@ async def ban(ctx, member: discord.Member, *, reason="sem motivo"):
 @commands.has_permissions(kick_members=True)
 async def kick(ctx, member: discord.Member, *, reason="sem motivo"):
     await member.kick(reason=reason)
-
-    await log("KICK", f"{member} | Staff: {ctx.author} | {reason}")
     await ctx.send("Usuário expulso.")
 
-# ----------------------------
-# MUTE (TIMEOUT)
-# ----------------------------
-@bot.command()
-@commands.has_permissions(moderate_members=True)
-async def mute(ctx, member: discord.Member, minutes: int, *, reason="sem motivo"):
-    await member.timeout(discord.utils.utcnow() + discord.timedelta(minutes=minutes), reason=reason)
-
-    await log("MUTE", f"{member} | {minutes} min | {reason}")
-    await ctx.send("Usuário mutado.")
+    await send_log(ctx.guild, f"👢 KICK: {member} | {reason}")
 
 # ----------------------------
 # WARN
 # ----------------------------
+WARN_FILE = "warns.json"
+
+def load_warns():
+    try:
+        with open(WARN_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_warns(data):
+    with open(WARN_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+warns = load_warns()
+
 @bot.command()
 async def warn(ctx, member: discord.Member, *, reason="sem motivo"):
-    add_warn(member.id, reason)
+    uid = str(member.id)
 
-    await member.send(f"⚠️ Você recebeu warn: {reason}")
+    warns.setdefault(uid, []).append(reason)
+    save_warns(warns)
 
-    await log("WARN", f"{member} | Staff: {ctx.author} | {reason}")
     await ctx.send("Warn aplicado.")
+
+    try:
+        await member.send(f"⚠️ Você recebeu warn: {reason}")
+    except:
+        pass
+
+    await send_log(ctx.guild, f"⚠️ WARN: {member} | {reason}")
 
 # ----------------------------
 # VER WARNS
 # ----------------------------
 @bot.command()
 async def warns(ctx, member: discord.Member):
-    data = warns.get(str(member.id), [])
+    uid = str(member.id)
+    data = warns.get(uid, [])
 
     if not data:
         return await ctx.send("Sem warns.")
 
-    await ctx.send("\n".join([f"{i+1}. {r}" for i, r in enumerate(data)]))
-
-# ----------------------------
-# PAINEL DE STAFF (BOTÕES)
-# ----------------------------
-class StaffPanel(discord.ui.View):
-
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="BAN", style=discord.ButtonStyle.red)
-    async def ban_btn(self, interaction, button):
-        await interaction.response.send_message("Use: !ban @user motivo", ephemeral=True)
-
-    @discord.ui.button(label="KICK", style=discord.ButtonStyle.orange)
-    async def kick_btn(self, interaction, button):
-        await interaction.response.send_message("Use: !kick @user motivo", ephemeral=True)
-
-    @discord.ui.button(label="MUTE", style=discord.ButtonStyle.blurple)
-    async def mute_btn(self, interaction, button):
-        await interaction.response.send_message("Use: !mute @user tempo motivo", ephemeral=True)
-
-    @discord.ui.button(label="WARN", style=discord.ButtonStyle.grey)
-    async def warn_btn(self, interaction, button):
-        await interaction.response.send_message("Use: !warn @user motivo", ephemeral=True)
-
-# ----------------------------
-# COMANDO PAINEL
-# ----------------------------
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def panel(ctx):
-    await ctx.send("📊 PAINEL DE STAFF", view=StaffPanel())
+    await ctx.send("\n".join([f"{i+1}. {w}" for i, w in enumerate(data)]))
 
 # ----------------------------
 bot.run(TOKEN)
