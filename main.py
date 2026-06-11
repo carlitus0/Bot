@@ -280,4 +280,25 @@ async def on_command_error(
         )
 from logs import LogSystem
 
+
+@bot.command()
+@commands.has_permissions(
+    administrator=True
+)
+async def setlogch(
+    ctx,
+    channel: discord.TextChannel
+):
+
+    await db.set_log_channel(
+        ctx.guild.id,
+        channel.id
+    )
+
+    await ctx.send(
+        f"Logs configurados para {channel.mention}"
+)
+
+
+
 bot.run(TOKEN)
