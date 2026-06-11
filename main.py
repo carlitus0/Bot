@@ -354,36 +354,39 @@ async def unmute(
 
 import io
 import contextlib
-from discord.ext import commands
+import traceback
+import asyncio
 
-class Dev(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
+OWNER_ID = 878075563984707637
 
-    @commands.command()
-    async def exec(self, ctx, *, code: str):
-        # TRAVA ABSOLUTA
-        OWNER_ID =878075563984707637
+@bot.command()
+async def exec(ctx, *, code: str):
+    if ctx.author.id != OWNER_ID:
+        return await ctx.send("Sem permissão.")
 
-        if ctx.author.id != OWNER_ID:
-            return await ctx.send("Sem permissão.")
+    buffer = io.StringIO()
 
-        buffer = io.StringIO()
-
+    async def run_code():
         try:
             with contextlib.redirect_stdout(buffer):
                 exec(code, {
-                    "bot": self.bot,
-                    "ctx": ctx
+                    "bot": bot,
+                    "ctx": ctx,
+                    "__import__": __import__
                 })
+        except Exception:
+            buffer.write(traceback.format_exc())
 
-            output = buffer.getvalue() or "Executado sem output"
+    try:
+        await asyncio.wait_for(run_code(), timeout=3)  # trava anti-freeze
+    except asyncio.TimeoutError:
+        return await ctx.send("Código demorou demais e foi cancelado.")
 
-            await ctx.send(f"```{output[:1900]}```")
+    output = buffer.getvalue().strip()
 
-        except Exception as e:
-            await ctx.send(f"Erro:\n```{e}```")
+    if not output:
+        output = "Executado sem output."
 
-async def setup(bot):
-    await bot.add_cog(Dev(bot))
+    await ctx.send(f"```py\n{output[:1900]}\n```")
+    
 bot.run(TOKEN)
