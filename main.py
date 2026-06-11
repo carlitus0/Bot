@@ -352,4 +352,32 @@ async def unmute(
         f"UNMUTE | {member}"
     )
 
+import io
+import contextlib
+import discord
+from discord.ext import commands
+
+OWNER_ID = 1234567890  # coloca seu ID aqui
+
+@bot.command()
+async def exec(ctx, *, code: str):
+    if ctx.author.id != OWNER_ID:
+        return await ctx.send("Sem permissão.")
+
+    buffer = io.StringIO()
+
+    try:
+        with contextlib.redirect_stdout(buffer):
+            exec(code, {"bot": bot, "ctx": ctx, "discord": discord})
+
+        output = buffer.getvalue()
+
+        if not output:
+            output = "Código executado (sem saída)."
+
+        await ctx.send(f"```\n{output[:1900]}\n```")
+
+    except Exception as e:
+        await ctx.send(f"Erro:\n```{e}```")
+
 bot.run(TOKEN)
