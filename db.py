@@ -35,3 +35,38 @@ async def get_warns(guild_id,user_id):
         ) as cursor:
 
             return await cursor.fetchall()
+async def set_log_channel(guild_id, channel_id):
+
+    async with aiosqlite.connect(DB) as db:
+
+        await db.execute(
+            """
+            INSERT OR REPLACE INTO guild_config
+            (guild_id, log_channel)
+            VALUES (?, ?)
+            """,
+            (guild_id, channel_id)
+        )
+
+        await db.commit()
+
+
+async def get_log_channel(guild_id):
+
+    async with aiosqlite.connect(DB) as db:
+
+        async with db.execute(
+            """
+            SELECT log_channel
+            FROM guild_config
+            WHERE guild_id=?
+            """,
+            (guild_id,)
+        ) as cur:
+
+            row = await cur.fetchone()
+
+            if row:
+                return row[0]
+
+            return None
