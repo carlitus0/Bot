@@ -31,11 +31,17 @@ async def on_ready():
 
     print(f"Logado como {bot.user}")
 
-
 async def send_log(guild,msg):
 
+    channel_id = await db.get_log_channel(
+        guild.id
+    )
+
+    if not channel_id:
+        channel_id = config.LOG_CHANNEL_ID
+
     channel = guild.get_channel(
-        config.LOG_CHANNEL_ID
+        channel_id
     )
 
     if channel:
