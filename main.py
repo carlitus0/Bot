@@ -1,7 +1,8 @@
 import discord
 from discord.ext import commands
-import asyncio
 import os
+import asyncio
+from datetime import timedelta
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -9,71 +10,66 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# -------------------------
-# TROLL SYSTEM
-# -------------------------
+# storage simples em memória
 troll_users = set()
 
-@bot.command()
-async def troll(ctx, user_id: int):
-    if user_id in troll_users:
-        troll_users.remove(user_id)
-        await ctx.send("🔴 Troll desativado")
-    else:
-        troll_users.add(user_id)
-        await ctx.send("🟢 Troll ativado")
+@bot.event
+async def on_ready():
+    print(f"Logado como {bot.user}")
 
+# -------------------
+# BAN
+# -------------------
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def ban(ctx, user: discord.Member, *, reason="Sem motivo"):
+    await user.ban(reason=reason)
+    await ctx.send(f"🔨 {user} foi banido. Motivo: {reason}")
+
+# -------------------
+# MUTE (timeout moderno)
+# -------------------
+@bot.command()
+@commands.has_permissions(moderate_members=True)
+async def mute(ctx, user: discord.Member, minutes: int, *, reason="Sem motivo"):
+    duration = timedelta(minutes=minutes)
+    await user.timeout(duration, reason=reason)
+    await ctx.send(f"🔇 {user} mutado por {minutes} minutos. Motivo: {reason}")
+
+# -------------------
+# UNMUTE
+# -------------------
+@bot.command()
+@commands.has_permissions(moderate_members=True)
+async def unmute(ctx, user: discord.Member):
+    await user.timeout(None)
+    await ctx.send(f"🔊 {user} foi desmutado")
+
+# -------------------
+# TOGGLE TROLL (modo seguro)
+# -------------------
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def troll(ctx, user: discord.Member):
+    if user.id in troll_users:
+        troll_users.remove(user.id)
+        await ctx.send(f"❌ Troll desativado para {user.name}")
+    else:
+        troll_users.add(user.id)
+        await ctx.send(f"⚠️ Troll ativado para {user.name}")
+
+# resposta do troll (SEM insulto)
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
     if message.author.id in troll_users:
-        await message.channel.send("bah")
+        await message.channel.send(f"{message.author.mention} tá sendo monitorado 👀")
 
     await bot.process_commands(message)
 
-# -------------------------
-# MUTE
-# -------------------------
-@bot.command()
-@commands.has_permissions(manage_roles=True)
-async def mute(ctx, user_id: int, tempo: int):
-    member = ctx.guild.get_member(user_id)
-
-    if not member:
-        await ctx.send("❌ Usuário não encontrado no servidor")
-        return
-
-    role = discord.utils.get(ctx.guild.roles, name="Muted")
-
-    if not role:
-        await ctx.send("❌ Crie a role 'Muted' primeiro")
-        return
-
-    await member.add_roles(role)
-    await ctx.send(f"🔇 Mutado por {tempo}s")
-
-    await asyncio.sleep(tempo)
-
-    await member.remove_roles(role)
-    await ctx.send("🔊 Mute acabou")
-
-# -------------------------
-# BAN
-# -------------------------
-@bot.command()
-@commands.has_permissions(ban_members=True)
-async def ban(ctx, user_id: int, *, reason=None):
-    user = await bot.fetch_user(user_id)
-    await ctx.guild.ban(user, reason=reason)
-    await ctx.send(f"🔨 Banido: {user_id}")
-
-# -------------------------
-# START
-# -------------------------
-@bot.event
-async def on_ready():
-    print(f"Logado como {bot.user}")
-
+# -------------------
+# RUN
+# -------------------
 bot.run(os.getenv("TOKEN"))
