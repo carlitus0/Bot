@@ -272,6 +272,6 @@ async def on_command_error(
         await ctx.send(
             "Sem permissão."
         )
-
+from logs import LogSystem
 
 bot.run(TOKEN)
