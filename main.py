@@ -54,7 +54,7 @@ async def run_code(code: str):
 class IDEModal(discord.ui.Modal, title="IDE Python"):
 
     code = discord.ui.TextInput(
-        label="Código Python",
+        label="CÃ³digo Python",
         style=discord.TextStyle.paragraph,
         required=True
     )
@@ -62,7 +62,7 @@ class IDEModal(discord.ui.Modal, title="IDE Python"):
     async def on_submit(self, interaction: discord.Interaction):
 
         if interaction.user.id != OWNER_ID:
-            return await interaction.response.send_message("Sem permissão.", ephemeral=True)
+            return await interaction.response.send_message("Sem permissÃ£o.", ephemeral=True)
 
         stdout, stderr = await run_code(str(self.code))
 
@@ -96,7 +96,7 @@ class IDEView(discord.ui.View):
     async def run(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         if interaction.user.id != OWNER_ID:
-            return await interaction.response.send_message("Sem permissão.", ephemeral=True)
+            return await interaction.response.send_message("Sem permissÃ£o.", ephemeral=True)
 
         await interaction.response.send_modal(IDEModal())
 
@@ -106,7 +106,7 @@ class IDEView(discord.ui.View):
         data = exec_history.get(interaction.user.id)
 
         if not data:
-            return await interaction.response.send_message("Sem histórico.", ephemeral=True)
+            return await interaction.response.send_message("Sem histÃ³rico.", ephemeral=True)
 
         msg = f"""
 CODE:
@@ -125,10 +125,10 @@ ERROR:
     async def clear(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         if interaction.user.id != OWNER_ID:
-            return await interaction.response.send_message("Sem permissão.", ephemeral=True)
+            return await interaction.response.send_message("Sem permissÃ£o.", ephemeral=True)
 
         exec_history.pop(interaction.user.id, None)
-        await interaction.response.send_message("Histórico limpo.", ephemeral=True)
+        await interaction.response.send_message("HistÃ³rico limpo.", ephemeral=True)
 
 
 # ================= BOT EVENTS =================
@@ -157,7 +157,7 @@ async def send_log(guild, msg):
 async def ide(ctx):
 
     if ctx.author.id != OWNER_ID:
-        return await ctx.send("Sem permissão.")
+        return await ctx.send("Sem permissÃ£o.")
 
     await ctx.send("IDE ativa:", view=IDEView())
 
@@ -165,7 +165,7 @@ async def ide(ctx):
 @bot.command()
 async def console(ctx):
     if ctx.author.id != OWNER_ID:
-        return await ctx.send("Sem permissão.")
+        return await ctx.send("Sem permissÃ£o.")
 
     await ctx.send("IDE ativa:", view=IDEView())
 
@@ -196,7 +196,7 @@ async def warn(ctx, member: discord.Member, *, reason="Sem motivo"):
     await db.add_warn(ctx.guild.id, member.id, reason)
 
     try:
-        await member.send(f"Você recebeu warn: {reason}")
+        await member.send(f"VocÃª recebeu warn: {reason}")
     except:
         pass
 
@@ -235,7 +235,7 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
     if isinstance(error, commands.MissingPermissions):
-        await ctx.send("Sem permissão.")
+        await ctx.send("Sem permissÃ£o.")
 
 
 import datetime
@@ -248,7 +248,7 @@ from discord.ext import commands
 async def mute(ctx, member: discord.Member, minutes: int, *, reason="Sem motivo"):
 
     if minutes <= 0:
-        return await ctx.send("Tempo inválido.")
+        return await ctx.send("Tempo invÃ¡lido.")
 
     try:
         duration = datetime.timedelta(minutes=minutes)
@@ -256,11 +256,11 @@ async def mute(ctx, member: discord.Member, minutes: int, *, reason="Sem motivo"
         await member.timeout(duration, reason=reason)
 
         await ctx.send(
-            f"🔇 {member.mention} mutado por {minutes} minuto(s). Motivo: {reason}"
+            f"ðŸ”‡ {member.mention} mutado por {minutes} minuto(s). Motivo: {reason}"
         )
 
     except discord.Forbidden:
-        await ctx.send("Sem permissão pra mutar esse usuário.")
+        await ctx.send("Sem permissÃ£o pra mutar esse usuÃ¡rio.")
 
     except Exception as e:
         await ctx.send(f"Erro: {e}")
@@ -273,10 +273,10 @@ async def unmute(ctx, member: discord.Member):
     try:
         await member.timeout(None)
 
-        await ctx.send(f"🔊 {member.mention} desmutado.")
+        await ctx.send(f"ðŸ”Š {member.mention} desmutado.")
 
     except discord.Forbidden:
-        await ctx.send("Sem permissão.")
+        await ctx.send("Sem permissÃ£o.")
 
     except Exception as e:
         await ctx.send(f"Erro: {e}")
@@ -295,7 +295,7 @@ async def criarcargo(ctx, nome: str, cor: str = "default"):
     try:
         color = discord.Color.default()
 
-        # cores básicas aceitas
+        # cores bÃ¡sicas aceitas
         cores = {
             "vermelho": discord.Color.red(),
             "azul": discord.Color.blue(),
@@ -318,7 +318,7 @@ async def criarcargo(ctx, nome: str, cor: str = "default"):
         await ctx.send(f"Cargo criado: {role.mention}")
 
     except discord.Forbidden:
-        await ctx.send("Sem permissão pra criar cargo.")
+        await ctx.send("Sem permissÃ£o pra criar cargo.")
 
     except Exception as e:
         await ctx.send(f"Erro: {e}")
@@ -343,14 +343,14 @@ async def delcargo(ctx, *, role_identifier: str):
             role = discord.utils.get(ctx.guild.roles, name=role_identifier)
 
         if role is None:
-            return await ctx.send("Cargo não encontrado.")
+            return await ctx.send("Cargo nÃ£o encontrado.")
 
         await role.delete(reason=f"Deletado por {ctx.author}")
 
         await ctx.send(f"Cargo `{role.name}` deletado.")
 
     except discord.Forbidden:
-        await ctx.send("Sem permissão pra deletar cargo.")
+        await ctx.send("Sem permissÃ£o pra deletar cargo.")
 
     except Exception as e:
         await ctx.send(f"Erro: {e}")
@@ -368,7 +368,7 @@ async def setar(ctx, member: discord.Member, *, role: discord.Role):
         await ctx.send(f"{member.mention} recebeu o cargo {role.mention}")
 
     except discord.Forbidden:
-        await ctx.send("Sem permissão pra adicionar cargo.")
+        await ctx.send("Sem permissÃ£o pra adicionar cargo.")
 
     except Exception as e:
         await ctx.send(f"Erro: {e}")
@@ -396,18 +396,18 @@ async def loop(ctx, command_name: str, seconds: int = 60):
         loops[guild_id] = {}
 
     if command_name in loops[guild_id]:
-        return await ctx.send("Loop já ativo.")
+        return await ctx.send("Loop jÃ¡ ativo.")
 
     async def task():
 
-        await ctx.send(f"🔁 Loop iniciado: {command_name}")
+        await ctx.send(f"ðŸ” Loop iniciado: {command_name}")
 
         while command_name in loops.get(guild_id, {}):
 
             cmd = bot.get_command(command_name)
 
             if not cmd:
-                await ctx.send("Comando não existe.")
+                await ctx.send("Comando nÃ£o existe.")
                 break
 
             try:
@@ -485,7 +485,7 @@ async def criarcanal(ctx, nome: str, tipo: str = "text"):
         await ctx.send(f"Canal criado: {channel.mention}")
 
     except discord.Forbidden:
-        await ctx.send("Sem permissão pra criar canal.")
+        await ctx.send("Sem permissÃ£o pra criar canal.")
 
     except Exception as e:
         await ctx.send(f"Erro: {e}")
@@ -504,7 +504,7 @@ async def delcanal(ctx, canal: discord.TextChannel):
         await ctx.send(f"Canal `{nome}` deletado.")
 
     except discord.Forbidden:
-        await ctx.send("Sem permissão pra deletar canal.")
+        await ctx.send("Sem permissÃ£o pra deletar canal.")
 
     except Exception as e:
         await ctx.send(f"Erro: {e}")
@@ -522,7 +522,7 @@ async def renamecanal(ctx, canal: discord.TextChannel, *, novo_nome: str):
         await ctx.send(f"Canal renomeado para `{novo_nome}`")
 
     except discord.Forbidden:
-        await ctx.send("Sem permissão.")
+        await ctx.send("Sem permissÃ£o.")
 
     except Exception as e:
         await ctx.send(f"Erro: {e}")
@@ -539,10 +539,10 @@ async def lock(ctx, canal: discord.TextChannel = None):
 
     try:
         await canal.set_permissions(ctx.guild.default_role, send_messages=False)
-        await ctx.send(f"🔒 Canal {canal.mention} travado.")
+        await ctx.send(f"ðŸ”’ Canal {canal.mention} travado.")
 
     except discord.Forbidden:
-        await ctx.send("Sem permissão.")
+        await ctx.send("Sem permissÃ£o.")
 
     except Exception as e:
         await ctx.send(f"Erro: {e}")
@@ -559,10 +559,10 @@ async def unlock(ctx, canal: discord.TextChannel = None):
 
     try:
         await canal.set_permissions(ctx.guild.default_role, send_messages=True)
-        await ctx.send(f"🔓 Canal {canal.mention} destravado.")
+        await ctx.send(f"ðŸ”“ Canal {canal.mention} destravado.")
 
     except discord.Forbidden:
-        await ctx.send("Sem permissão.")
+        await ctx.send("Sem permissÃ£o.")
 
     except Exception as e:
         await ctx.send(f"Erro: {e}")
@@ -716,8 +716,8 @@ async def auto_delete(channel_id, delay):
 # =========================
 class EmbedModal(discord.ui.Modal, title="Embed Builder"):
 
-    title_input = discord.ui.TextInput(label="Título")
-    desc_input = discord.ui.TextInput(label="Descrição", style=discord.TextStyle.paragraph)
+    title_input = discord.ui.TextInput(label="TÃ­tulo")
+    desc_input = discord.ui.TextInput(label="DescriÃ§Ã£o", style=discord.TextStyle.paragraph)
     color_input = discord.ui.TextInput(label="Cor HEX (opcional)", required=False)
 
     def __init__(self, channel):
@@ -735,7 +735,7 @@ class EmbedModal(discord.ui.Modal, title="Embed Builder"):
         )
 
         await self.channel.send(embed=embed)
-        await interaction.response.send_message("✔ Embed enviada", ephemeral=True)
+        await interaction.response.send_message("âœ” Embed enviada", ephemeral=True)
 
 
 # =========================
@@ -763,7 +763,7 @@ class AutoMsgModal(discord.ui.Modal, title="Auto Message"):
 
         asyncio.create_task(auto_message(cid, msg, interval))
 
-        await interaction.response.send_message("✔ Auto message ativa", ephemeral=True)
+        await interaction.response.send_message("âœ” Auto message ativa", ephemeral=True)
 
 
 # =========================
@@ -788,7 +788,7 @@ class AutoDelModal(discord.ui.Modal, title="Auto Delete"):
 
         asyncio.create_task(auto_delete(cid, delay))
 
-        await interaction.response.send_message("✔ Auto delete ativo", ephemeral=True)
+        await interaction.response.send_message("âœ” Auto delete ativo", ephemeral=True)
 
 
 # =========================
@@ -799,15 +799,15 @@ class Dashboard(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=120)
 
-    @discord.ui.button(label="📊 Embed", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="ðŸ“Š Embed", style=discord.ButtonStyle.primary)
     async def embed(self, interaction, button):
         await interaction.response.send_modal(EmbedModal(interaction.channel))
 
-    @discord.ui.button(label="🔁 Auto Msg", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="ðŸ” Auto Msg", style=discord.ButtonStyle.success)
     async def auto(self, interaction, button):
         await interaction.response.send_modal(AutoMsgModal())
 
-    @discord.ui.button(label="🗑 Auto Delete", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="ðŸ—‘ Auto Delete", style=discord.ButtonStyle.danger)
     async def delete(self, interaction, button):
         await interaction.response.send_modal(AutoDelModal())
 
@@ -817,318 +817,7 @@ class Dashboard(discord.ui.View):
 # =========================
 @bot.command()
 async def dashboard(ctx):
-    await ctx.send("📊 CONTROL PANEL", view=Dashboard())
-
-import discord
-from discord.ext import commands
-import asyncio
-import sqlite3
-
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-# =========================
-# GLOBAL STATE
-# =========================
-
-log_channel_v2 = None
-troll_map = {}  # user_id -> phrase
-
-# =========================
-# DB (AUTO SYSTEMS)
-# =========================
-
-db = sqlite3.connect("system.db")
-cur = db.cursor()
-
-cur.execute("""
-CREATE TABLE IF NOT EXISTS automsg (
-    channel_id INTEGER,
-    message TEXT,
-    interval INTEGER
-)
-""")
-
-db.commit()
-
-# =========================
-# LOG SYSTEM V2
-# =========================
-
-async def logv2(text):
-    if not log_channel_v2:
-        return
-
-    ch = bot.get_channel(log_channel_v2)
-    if ch:
-        await ch.send(f"📊 LOG V2\n{text}")
-
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def setchlogv2(ctx, channel: discord.TextChannel):
-    global log_channel_v2
-    log_channel_v2 = channel.id
-    await ctx.send(f"✔ Logs V2 ativado em {channel.mention}")
-
-# =========================
-# EVENT LOGS
-# =========================
-
-@bot.event
-async def on_command(ctx):
-    await logv2(f"CMD {ctx.author}: {ctx.message.content}")
-
-
-@bot.event
-async def on_member_ban(guild, user):
-    await logv2(f"BAN {user} ({user.id})")
-
-
-@bot.event
-async def on_member_unban(guild, user):
-    await logv2(f"UNBAN {user} ({user.id})")
-
-
-@bot.event
-async def on_message_delete(message):
-    if message.author.bot:
-        return
-    await logv2(f"DELETE {message.author}: {message.content}")
-
-# =========================
-# TROLL SYSTEM
-# =========================
-
-@bot.command()
-async def troll(ctx, member: discord.Member, duration: int, *, phrase: str):
-    troll_map[member.id] = phrase
-
-    await ctx.send(f"✔ Troll ativo {member.mention} ({duration}s)")
-
-    async def stop():
-        await asyncio.sleep(duration)
-        troll_map.pop(member.id, None)
-
-    asyncio.create_task(stop())
-
-
-@bot.command()
-async def stoptroll(ctx, member: discord.Member):
-    troll_map.pop(member.id, None)
-    await ctx.send(f"🛑 Troll parado {member.mention}")
-
-# =========================
-# AUTO MESSAGE LOOP
-# =========================
-
-async def auto_message(channel_id, message, interval):
-    ch = bot.get_channel(channel_id)
-    if not ch:
-        return
-
-    while True:
-        await ch.send(message)
-        await asyncio.sleep(interval)
-
-# =========================
-# AUTO DELETE LOOP
-# =========================
-
-async def auto_delete(channel_id, delay):
-    ch = bot.get_channel(channel_id)
-    if not ch:
-        return
-
-    while True:
-        await asyncio.sleep(delay)
-
-        try:
-            async for m in ch.history(limit=20):
-                await m.delete()
-        except:
-            pass
-
-# =========================
-# ON MESSAGE (TROLL ENGINE)
-# =========================
-
-@bot.event
-async def on_message(message):
-
-    if message.author.bot:
-        return
-
-    if message.author.id in troll_map:
-        await message.channel.send(troll_map[message.author.id])
-
-    await bot.process_commands(message)
-
-# =========================
-# DASHBOARD (UI SIMPLES)
-# =========================
-
-class Dash(discord.ui.View):
-
-    @discord.ui.button(label="Embed", style=discord.ButtonStyle.primary)
-    async def embed(self, i, b):
-        await i.response.send_message("Embed system placeholder", ephemeral=True)
-
-    @discord.ui.button(label="AutoMsg", style=discord.ButtonStyle.success)
-    async def auto(self, i, b):
-        await i.response.send_message("AutoMsg placeholder", ephemeral=True)
-
-    @discord.ui.button(label="AutoDel", style=discord.ButtonStyle.danger)
-    async def delb(self, i, b):
-        await i.response.send_message("AutoDelete placeholder", ephemeral=True)
-
-
-@bot.command()
-async def dashboard(ctx):
-    await ctx.send("📊 PAINEL", view=Dash())
-
-# =========================
-# DYNO LOGS v2 (SINGLE BLOCK)
-# =========================
-
-import discord
-
-# CRIA TABELA (RODA UMA VEZ)
-cur.execute("""
-CREATE TABLE IF NOT EXISTS logs_config (
-    guild_id INTEGER PRIMARY KEY,
-    channel_id INTEGER,
-    active INTEGER DEFAULT 1
-)
-""")
-db.commit()
-
-
-# =========================
-# CORE
-# =========================
-
-async def get_log_channel(guild):
-    try:
-        cur.execute(
-            "SELECT channel_id, active FROM logs_config WHERE guild_id=?",
-            (guild.id,)
-        )
-        data = cur.fetchone()
-
-        if not data:
-            return None
-
-        channel_id, active = data
-
-        if active != 1:
-            return None
-
-        return guild.get_channel(channel_id)
-
-    except:
-        return None
-
-
-async def log_send(guild, title, desc, color=0x2b2d31):
-    channel = await get_log_channel(guild)
-    if not channel:
-        return
-
-    try:
-        embed = discord.Embed(
-            title=title,
-            description=desc[:4000],
-            color=color
-        )
-        await channel.send(embed=embed)
-    except:
-        pass
-
-
-# =========================
-# COMMANDS
-# =========================
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def logsetch2(ctx, channel: discord.TextChannel):
-
-    cur.execute("""
-    INSERT OR REPLACE INTO logs_config (guild_id, channel_id, active)
-    VALUES (?, ?, 1)
-    """, (ctx.guild.id, channel.id))
-
-    db.commit()
-
-    await ctx.send(f"✔ Logs ativados em {channel.mention}")
-
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def unsetlog(ctx):
-
-    cur.execute("""
-    UPDATE logs_config
-    SET active=0
-    WHERE guild_id=?
-    """, (ctx.guild.id,))
-
-    db.commit()
-
-    await ctx.send("❌ Logs desativados")
-
-
-# =========================
-# EVENTS (INJETA NO TEU BOT)
-# =========================
-
-@bot.event
-async def on_message_delete(message):
-    if message.guild:
-        await log_send(
-            message.guild,
-            "🗑 Mensagem apagada",
-            f"{message.author}: {message.content}",
-            0xe74c3c
-        )
-
-
-@bot.event
-async def on_message_edit(before, after):
-    if before.guild:
-        await log_send(
-            before.guild,
-            "✏ Mensagem editada",
-            f"{before.author}\nANTES: {before.content}\nDEPOIS: {after.content}",
-            0xf1c40f
-        )
-
-
-@bot.event
-async def on_member_join(member):
-    await log_send(
-        member.guild,
-        "📥 Entrada",
-        str(member),
-        0x2ecc71
-    )
-
-
-@bot.event
-async def on_member_remove(member):
-    await log_send(
-        member.guild,
-        "📤 Saída",
-        str(member),
-        0xe67e22
-                   )
-
-# =========================
-# RUN BOT
-# =========================
-
-
+    await ctx.send("ðŸ“Š CONTROL PANEL", view=Dashboard())
 
 
 bot.run(TOKEN)
