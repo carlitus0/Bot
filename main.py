@@ -820,22 +820,29 @@ async def dashboard(ctx):
     await ctx.send("ðŸ“Š CONTROL PANEL", view=Dashboard())
 
 
-import os
+import discord
+from discord.ext import commands
+import asyncio
 
-async def load_modules():
-    for file in os.listdir("./modules"):
-        if file.endswith(".py"):
-            try:
-                await bot.load_extension(f"modules.{file[:-3]}")
-                print(f"Loaded: {file}")
-            except Exception as e:
-                print(f"Erro em {file}: {e}")
+intents = discord.Intents.all()
+
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents,
+    help_command=None
+)
+
+# =========================
+# LOAD MODULES
+# =========================
+async def load_extensions():
+    await bot.load_extension("modules.utils")
+
 
 @bot.event
 async def on_ready():
-    print(f"Bot online: {bot.user}")
-    await load_modules()
+    print(f"ONLINE: {bot.user}")
+    await load_extensions()
 
-print([c.name for c in bot.commands])
 
 bot.run(TOKEN)
