@@ -215,3 +215,26 @@ async def status(ctx):
 @bot.event
 async def on_ready():
     print(f"ONLINE: {bot.user}")
+
+import discord
+from discord.ext import commands
+
+class Utils(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.command()
+    async def ping(self, ctx):
+        await ctx.send(f"{round(self.bot.latency * 1000)}ms")
+
+    @commands.command()
+    async def status(self, ctx):
+        g = ctx.guild
+        await ctx.send(f"Membros: {g.member_count} | Canais: {len(g.channels)}")
+
+
+# =========================
+# OBRIGATÓRIO PARA EXTENSION
+# =========================
+async def setup(bot):
+    await bot.add_cog(Utils(bot))
