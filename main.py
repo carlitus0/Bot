@@ -640,52 +640,155 @@ async def on_ready():
     await load_autos()
 
 
+import discord
+import sqlite3
+import asyncio
+from discord.ext import commands
+
 # =========================
-# EMBED BUILDER
+# DB
 # =========================
-class EmbedView(discord.ui.View):
-    def __init__(self, user_id, channel):
-        super().__init__(timeout=180)
-        self.user_id = user_id
+db = sqlite3.connect("system.db")
+cur = db.cursor()
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS automsg (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER,
+    message TEXT,
+    interval INTEGER,
+    active INTEGER DEFAULT 1
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS autodel (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id INTEGER,
+    delay INTEGER,
+    active INTEGER DEFAULT 1
+)
+""")
+
+db.commit()
+
+# =========================
+# ENGINE CACHE
+# =========================
+running_tasks = {}
+
+
+# =========================
+# AUTO MESSAGE ENGINE
+# =========================
+async def auto_message(channel_id, message, interval):
+
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        return
+
+    while True:
+        await channel.send(message)
+        await asyncio.sleep(interval)
+
+
+# =========================
+# AUTO DELETE ENGINE
+# =========================
+async def auto_delete(channel_id, delay):
+
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        return
+
+    while True:
+        await asyncio.sleep(delay)
+
+        try:
+            async for msg in channel.history(limit=30):
+                await msg.delete()
+        except:
+            pass
+
+
+# =========================
+# MODAL - EMBED
+# =========================
+class EmbedModal(discord.ui.Modal, title="Embed Builder"):
+
+    title_input = discord.ui.TextInput(label="Título")
+    desc_input = discord.ui.TextInput(label="Descrição", style=discord.TextStyle.paragraph)
+    color_input = discord.ui.TextInput(label="Cor HEX (opcional)", required=False)
+
+    def __init__(self, channel):
+        super().__init__()
         self.channel = channel
 
-        embed_cache[user_id] = {
-            "title": "",
-            "desc": "",
-            "color": 0x3498db
-        }
+    async def on_submit(self, interaction: discord.Interaction):
 
-    def build(self):
-        d = embed_cache[self.user_id]
+        color = self.color_input.value or "3498db"
 
-        return discord.Embed(
-            title=d["title"],
-            description=d["desc"],
-            color=d["color"]
+        embed = discord.Embed(
+            title=self.title_input.value,
+            description=self.desc_input.value,
+            color=int(color, 16)
         )
 
-    @discord.ui.button(label="Título", style=discord.ButtonStyle.primary)
-    async def t(self, i, b):
-        await i.response.send_message("Título:", ephemeral=True)
-        m = await bot.wait_for("message", check=lambda x: x.author.id == self.user_id)
-        embed_cache[self.user_id]["title"] = m.content
-        await m.reply("OK")
+        await self.channel.send(embed=embed)
+        await interaction.response.send_message("✔ Embed enviada", ephemeral=True)
 
-    @discord.ui.button(label="Descrição", style=discord.ButtonStyle.primary)
-    async def d(self, i, b):
-        await i.response.send_message("Descrição:", ephemeral=True)
-        m = await bot.wait_for("message", check=lambda x: x.author.id == self.user_id)
-        embed_cache[self.user_id]["desc"] = m.content
-        await m.reply("OK")
 
-    @discord.ui.button(label="Preview", style=discord.ButtonStyle.secondary)
-    async def p(self, i, b):
-        await i.response.send_message(embed=self.build(), ephemeral=True)
+# =========================
+# MODAL - AUTO MESSAGE
+# =========================
+class AutoMsgModal(discord.ui.Modal, title="Auto Message"):
 
-    @discord.ui.button(label="Enviar", style=discord.ButtonStyle.danger)
-    async def s(self, i, b):
-        await self.channel.send(embed=self.build())
-        await i.response.send_message("Enviado", ephemeral=True)
+    channel_id = discord.ui.TextInput(label="Channel ID")
+    message = discord.ui.TextInput(label="Mensagem", style=discord.TextStyle.paragraph)
+    interval = discord.ui.TextInput(label="Intervalo (segundos)")
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        cid = int(self.channel_id.value)
+
+        msg = self.message.value
+        interval = int(self.interval.value)
+
+        cur.execute("""
+        INSERT INTO automsg (channel_id,message,interval,active)
+        VALUES (?,?,?,1)
+        """, (cid, msg, interval))
+
+        db.commit()
+
+        asyncio.create_task(auto_message(cid, msg, interval))
+
+        await interaction.response.send_message("✔ Auto message ativa", ephemeral=True)
+
+
+# =========================
+# MODAL - AUTO DELETE
+# =========================
+class AutoDelModal(discord.ui.Modal, title="Auto Delete"):
+
+    channel_id = discord.ui.TextInput(label="Channel ID")
+    delay = discord.ui.TextInput(label="Delay (segundos)")
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        cid = int(self.channel_id.value)
+        delay = int(self.delay.value)
+
+        cur.execute("""
+        INSERT INTO autodel (channel_id,delay,active)
+        VALUES (?,?,1)
+        """, (cid, delay))
+
+        db.commit()
+
+        asyncio.create_task(auto_delete(cid, delay))
+
+        await interaction.response.send_message("✔ Auto delete ativo", ephemeral=True)
 
 
 # =========================
@@ -693,77 +796,20 @@ class EmbedView(discord.ui.View):
 # =========================
 class Dashboard(discord.ui.View):
 
-    def __init__(self, guild):
-        super().__init__()
-        self.guild = guild
+    def __init__(self):
+        super().__init__(timeout=120)
 
     @discord.ui.button(label="📊 Embed", style=discord.ButtonStyle.primary)
-    async def embed(self, i, b):
-        await i.response.send_message(
-            "Escolha canal:",
-            view=ChannelPick(self.guild, mode="embed"),
-            ephemeral=True
-        )
+    async def embed(self, interaction, button):
+        await interaction.response.send_modal(EmbedModal(interaction.channel))
 
     @discord.ui.button(label="🔁 Auto Msg", style=discord.ButtonStyle.success)
-    async def auto(self, i, b):
-        await i.response.send_message(
-            "Envie: canal | mensagem | intervalo",
-            ephemeral=True
-        )
+    async def auto(self, interaction, button):
+        await interaction.response.send_modal(AutoMsgModal())
 
-        msg = await bot.wait_for("message", check=lambda m: m.author.id == i.user.id)
-
-        ch_name, text, interval = msg.content.split("|")
-        ch = discord.utils.get(self.guild.text_channels, name=ch_name.strip())
-
-        cur.execute("""
-        INSERT INTO automsg (user_id,guild_id,channel_id,message,interval,active)
-        VALUES (?,?,?,?,?,1)
-        """, (
-            i.user.id,
-            self.guild.id,
-            ch.id,
-            text,
-            int(interval)
-        ))
-
-        db.commit()
-        await msg.reply("Salvo ✔")
-
-
-# =========================
-# CHANNEL PICKER
-# =========================
-class ChannelPick(discord.ui.Select):
-
-    def __init__(self, guild, mode):
-        self.guild = guild
-        self.mode = mode
-
-        options = [
-            discord.SelectOption(label=c.name, value=str(c.id))
-            for c in guild.text_channels[:25]
-        ]
-
-        super().__init__(placeholder="Escolha canal", options=options)
-
-    async def callback(self, i):
-
-        ch = i.guild.get_channel(int(self.values[0]))
-
-        if self.mode == "embed":
-            await i.response.send_message(
-                "Editor aberto",
-                view=EmbedView(i.user.id, ch),
-                ephemeral=True
-            )
-
-
-class ChannelView(discord.ui.View):
-    def __init__(self, guild, mode):
-        super().__init__()
-        self.add_item(ChannelPick(guild, mode))
+    @discord.ui.button(label="🗑 Auto Delete", style=discord.ButtonStyle.danger)
+    async def delete(self, interaction, button):
+        await interaction.response.send_modal(AutoDelModal())
 
 
 # =========================
@@ -771,7 +817,7 @@ class ChannelView(discord.ui.View):
 # =========================
 @bot.command()
 async def dashboard(ctx):
-    await ctx.send("📊 DASHBOARD ENTERPRISE", view=Dashboard(ctx.guild))
+    await ctx.send("📊 CONTROL PANEL", view=Dashboard())
 
 
 bot.run(TOKEN)
