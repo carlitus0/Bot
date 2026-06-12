@@ -830,19 +830,6 @@ bot = commands.Bot(
     command_prefix="!",
     intents=intents,
     help_command=None
-)
-
-# =========================
-# LOAD MODULES
-# =========================
-async def load_extensions():
-    await bot.load_extension("modules.utils")
-
-
-@bot.event
-async def on_ready():
-    print(f"ONLINE: {bot.user}")
-    await load_extensions()
 
 
 bot.run(TOKEN)
