@@ -1,7 +1,11 @@
 import os
 import discord
 import io
+import sys
 import traceback
+import asyncio
+import contextlib
+import time
 
 from dotenv import load_dotenv
 from discord.ext import commands
@@ -25,10 +29,29 @@ bot = commands.Bot(
 
 OWNER_ID = 878075563984707637
 
+exec_history = {}
 
-# ================= CONSOLE PRO =================
 
-class ExecModal(discord.ui.Modal, title="Python Console"):
+# ================= IDE ENGINE =================
+
+async def run_code(code: str):
+    out = io.StringIO()
+    err = io.StringIO()
+
+    def _exec():
+        try:
+            with contextlib.redirect_stdout(out):
+                with contextlib.redirect_stderr(err):
+                    exec(code, {"__import__": __import__})
+        except Exception:
+            err.write(traceback.format_exc())
+
+    await asyncio.to_thread(_exec)
+
+    return out.getvalue(), err.getvalue()
+
+
+class IDEModal(discord.ui.Modal, title="IDE Python"):
 
     code = discord.ui.TextInput(
         label="Código Python",
@@ -41,45 +64,74 @@ class ExecModal(discord.ui.Modal, title="Python Console"):
         if interaction.user.id != OWNER_ID:
             return await interaction.response.send_message("Sem permissão.", ephemeral=True)
 
-        buffer = io.StringIO()
+        stdout, stderr = await run_code(str(self.code))
 
-        try:
-            exec(
-                str(self.code),
-                {
-                    "bot": bot,
-                    "ctx": None,
-                    "__import__": __import__,
-                    "print": lambda *args, **kwargs: print(*args, file=buffer, **kwargs)
-                }
-            )
+        exec_history[interaction.user.id] = {
+            "code": str(self.code),
+            "stdout": stdout,
+            "stderr": stderr,
+            "time": time.time()
+        }
 
-        except Exception:
-            buffer.write(traceback.format_exc())
+        result = ""
 
-        output = buffer.getvalue().strip()
+        if stdout:
+            result += f"OUTPUT:\n{stdout}\n"
 
-        if not output:
-            output = "SEM OUTPUT"
+        if stderr:
+            result += f"\nERROR:\n{stderr}\n"
+
+        if not result.strip():
+            result = "SEM OUTPUT"
 
         await interaction.response.send_message(
-            f"```py\n{output[:1900]}```",
+            f"```py\n{result[:1900]}```",
             ephemeral=True
         )
 
 
-class ConsoleView(discord.ui.View):
+class IDEView(discord.ui.View):
 
-    @discord.ui.button(label="Abrir Console", style=discord.ButtonStyle.primary)
-    async def open_console(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="Run Code", style=discord.ButtonStyle.green)
+    async def run(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         if interaction.user.id != OWNER_ID:
             return await interaction.response.send_message("Sem permissão.", ephemeral=True)
 
-        await interaction.response.send_modal(ExecModal())
+        await interaction.response.send_modal(IDEModal())
 
-# =================================================
+    @discord.ui.button(label="Last Run", style=discord.ButtonStyle.primary)
+    async def last(self, interaction: discord.Interaction, button: discord.ui.Button):
 
+        data = exec_history.get(interaction.user.id)
+
+        if not data:
+            return await interaction.response.send_message("Sem histórico.", ephemeral=True)
+
+        msg = f"""
+CODE:
+{data['code']}
+
+OUTPUT:
+{data['stdout']}
+
+ERROR:
+{data['stderr']}
+"""
+
+        await interaction.response.send_message(f"```py\n{msg[:1900]}```", ephemeral=True)
+
+    @discord.ui.button(label="Clear History", style=discord.ButtonStyle.red)
+    async def clear(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        if interaction.user.id != OWNER_ID:
+            return await interaction.response.send_message("Sem permissão.", ephemeral=True)
+
+        exec_history.pop(interaction.user.id, None)
+        await interaction.response.send_message("Histórico limpo.", ephemeral=True)
+
+
+# ================= BOT EVENTS =================
 
 @bot.event
 async def on_ready():
@@ -102,12 +154,20 @@ async def send_log(guild, msg):
 # ================= COMMANDS =================
 
 @bot.command()
-async def console(ctx):
+async def ide(ctx):
 
     if ctx.author.id != OWNER_ID:
         return await ctx.send("Sem permissão.")
 
-    await ctx.send("Console de desenvolvimento:", view=ConsoleView())
+    await ctx.send("IDE ativa:", view=IDEView())
+
+
+@bot.command()
+async def console(ctx):
+    if ctx.author.id != OWNER_ID:
+        return await ctx.send("Sem permissão.")
+
+    await ctx.send("IDE ativa:", view=IDEView())
 
 
 @bot.command()
@@ -165,34 +225,6 @@ async def setticket(ctx):
 
 
 @bot.command()
-@commands.has_permissions(manage_roles=True)
-async def addrole(ctx, member: discord.Member, role: discord.Role):
-    await member.add_roles(role)
-    await ctx.send("Cargo adicionado.")
-
-
-@bot.command()
-@commands.has_permissions(manage_roles=True)
-async def removerole(ctx, member: discord.Member, role: discord.Role):
-    await member.remove_roles(role)
-    await ctx.send("Cargo removido.")
-
-
-@bot.command()
-@commands.has_permissions(manage_channels=True)
-async def lock(ctx):
-    await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=False)
-    await ctx.send("Canal bloqueado.")
-
-
-@bot.command()
-@commands.has_permissions(manage_channels=True)
-async def unlock(ctx):
-    await ctx.channel.set_permissions(ctx.guild.default_role, send_messages=True)
-    await ctx.send("Canal desbloqueado.")
-
-
-@bot.command()
 @commands.has_permissions(manage_messages=True)
 async def clear(ctx, quantidade: int):
     await ctx.channel.purge(limit=quantidade + 1)
@@ -202,35 +234,10 @@ async def clear(ctx, quantidade: int):
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
-
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("Sem permissão.")
 
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def setlogch(ctx, channel: discord.TextChannel):
-    await db.set_log_channel(ctx.guild.id, channel.id)
-    await ctx.send(f"Logs configurados para {channel.mention}")
-
-
-@bot.command()
-@commands.has_permissions(moderate_members=True)
-async def mute(ctx, member: discord.Member, minutos: int, *, motivo="Sem motivo"):
-    import datetime
-
-    await member.timeout(datetime.timedelta(minutes=minutos), reason=motivo)
-
-    await ctx.send(f"{member.mention} mutado por {minutos} minutos.")
-    await send_log(ctx.guild, f"MUTE | {member} | {minutos}min | {motivo}")
-
-
-@bot.command()
-@commands.has_permissions(moderate_members=True)
-async def unmute(ctx, member: discord.Member):
-    await member.timeout(None)
-    await ctx.send(f"{member.mention} desmutado.")
-    await send_log(ctx.guild, f"UNMUTE | {member}")
-
+# ================= RUN =================
 
 bot.run(TOKEN)
