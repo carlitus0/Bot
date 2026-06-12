@@ -1,0 +1,217 @@
+import discord
+from discord.ext import commands
+import asyncio
+
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+
+# =========================
+# STORAGE
+# =========================
+
+log_channels = {}
+automod_words = {}
+loop_tasks = {}
+
+# =========================
+# LOG SYSTEM
+# =========================
+
+async def send_log(guild, msg):
+    cid = log_channels.get(guild.id)
+    if not cid:
+        return
+    channel = guild.get_channel(cid)
+    if channel:
+        await channel.send(msg)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def logcmd(ctx, channel: discord.TextChannel):
+    log_channels[ctx.guild.id] = channel.id
+    await ctx.send("Logs ativados")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def unsetlogcmd(ctx):
+    log_channels.pop(ctx.guild.id, None)
+    await ctx.send("Logs desativados")
+
+# =========================
+# AUTOMOD
+# =========================
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def automod_add(ctx, word):
+    automod_words.setdefault(ctx.guild.id, set()).add(word.lower())
+    await ctx.send("Palavra adicionada")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def automod_remove(ctx, word):
+    g = automod_words.get(ctx.guild.id)
+    if g:
+        g.discard(word.lower())
+    await ctx.send("Removido")
+
+@bot.event
+async def on_message(message):
+    if not message.guild or message.author.bot:
+        return
+
+    words = automod_words.get(message.guild.id, set())
+
+    if words:
+        content = message.content.lower()
+
+        for w in words:
+            if w in content:
+                try:
+                    await message.delete()
+                except:
+                    pass
+
+                await send_log(message.guild, f"AUTOMOD | {message.author} | {w}")
+                break
+
+    await bot.process_commands(message)
+
+# =========================
+# MODERAÇÃO
+# =========================
+
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def ban(ctx, member: discord.Member, *, reason=None):
+    await member.ban(reason=reason)
+    await ctx.send(f"{member} banido")
+    await send_log(ctx.guild, f"BAN | {member} | {reason}")
+
+@bot.command()
+@commands.has_permissions(kick_members=True)
+async def kick(ctx, member: discord.Member, *, reason=None):
+    await member.kick(reason=reason)
+    await ctx.send(f"{member} kickado")
+    await send_log(ctx.guild, f"KICK | {member}")
+
+@bot.command()
+async def warn(ctx, member: discord.Member):
+    await ctx.send(f"Warn aplicado em {member}")
+
+@bot.command()
+async def warns(ctx, member: discord.Member):
+    await ctx.send("0 warns")
+
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def clear(ctx, amount: int):
+    await ctx.channel.purge(limit=amount + 1)
+
+# =========================
+# CANAIS
+# =========================
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def criarcanal(ctx, nome):
+    ch = await ctx.guild.create_text_channel(nome)
+    await ctx.send(ch.mention)
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def delcanal(ctx, channel: discord.TextChannel):
+    await channel.delete()
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def renamecanal(ctx, channel: discord.TextChannel, *, name):
+    await channel.edit(name=name)
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def lock(ctx, channel=None):
+    channel = channel or ctx.channel
+    await channel.set_permissions(ctx.guild.default_role, send_messages=False)
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def unlock(ctx, channel=None):
+    channel = channel or ctx.channel
+    await channel.set_permissions(ctx.guild.default_role, send_messages=True)
+
+# =========================
+# CARGOS
+# =========================
+
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def criarcargo(ctx, name):
+    role = await ctx.guild.create_role(name=name)
+    await ctx.send(role.name)
+
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def delcargo(ctx, role: discord.Role):
+    await role.delete()
+
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def setar(ctx, member: discord.Member, role: discord.Role):
+    await member.add_roles(role)
+
+# =========================
+# LOOP SYSTEM (FIXADO)
+# =========================
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def loop(ctx, command_name, seconds=60):
+
+    if ctx.guild.id in loop_tasks:
+        return await ctx.send("Loop já ativo")
+
+    async def task():
+        while True:
+            cmd = bot.get_command(command_name)
+            if not cmd:
+                break
+
+            try:
+                await ctx.invoke(cmd)
+            except:
+                pass
+
+            await asyncio.sleep(seconds)
+
+    loop_tasks[ctx.guild.id] = asyncio.create_task(task())
+    await ctx.send("Loop iniciado")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def stoploop(ctx):
+    t = loop_tasks.pop(ctx.guild.id, None)
+    if t:
+        t.cancel()
+    await ctx.send("Loop parado")
+
+# =========================
+# UTIL
+# =========================
+
+@bot.command()
+async def ping(ctx):
+    await ctx.send(f"{round(bot.latency*1000)}ms")
+
+@bot.command()
+async def status(ctx):
+    g = ctx.guild
+    await ctx.send(f"Membros: {g.member_count} | Canais: {len(g.channels)}")
+
+# =========================
+# READY
+# =========================
+
+@bot.event
+async def on_ready():
+    print(f"ONLINE: {bot.user}")
