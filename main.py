@@ -819,5 +819,101 @@ class Dashboard(discord.ui.View):
 async def dashboard(ctx):
     await ctx.send("ðŸ“Š CONTROL PANEL", view=Dashboard())
 
+import discord
+from discord.ext import commands
+import time
+
+# =========================
+# LOGCMD PRO V2 (MEMORY SYSTEM)
+# =========================
+
+logcmd_config = {}  # guild_id -> channel_id
+
+
+# =========================
+# COMMANDS SETUP
+# =========================
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def logcmd(ctx, channel: discord.TextChannel):
+    logcmd_config[ctx.guild.id] = channel.id
+
+    await ctx.send(
+        f"🧾 Log de comandos ATIVADO em {channel.mention}"
+    )
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def unsetlogcmd(ctx):
+    logcmd_config.pop(ctx.guild.id, None)
+
+    await ctx.send(
+        "❌ Log de comandos DESATIVADO"
+    )
+
+
+# =========================
+# LOGGER CORE
+# =========================
+
+async def send_logcmd(ctx):
+
+    if not ctx.guild:
+        return
+
+    channel_id = logcmd_config.get(ctx.guild.id)
+    if not channel_id:
+        return
+
+    channel = ctx.guild.get_channel(channel_id)
+    if not channel:
+        return
+
+    try:
+        embed = discord.Embed(
+            title="🧾 Command Executed",
+            color=0x2b2d31,
+            timestamp=discord.utils.utcnow()
+        )
+
+        embed.add_field(
+            name="User",
+            value=f"{ctx.author} (`{ctx.author.id}`)",
+            inline=False
+        )
+
+        embed.add_field(
+            name="Channel",
+            value=ctx.channel.mention,
+            inline=True
+        )
+
+        embed.add_field(
+            name="Command",
+            value=f"`{ctx.message.content}`",
+            inline=False
+        )
+
+        embed.add_field(
+            name="Command Name",
+            value=f"`{ctx.command}`",
+            inline=True
+        )
+
+        await channel.send(embed=embed)
+
+    except:
+        pass
+
+
+# =========================
+# HOOK (CAPTURA TODOS COMANDOS)
+# =========================
+
+@bot.event
+async def on_command_completion(ctx):
+    await send_logcmd(ctx)
 
 bot.run(TOKEN)
