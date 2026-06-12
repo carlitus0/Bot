@@ -1,7 +1,7 @@
 import os
 import discord
 import io
-import contextlib
+import sys
 import traceback
 
 from dotenv import load_dotenv
@@ -45,43 +45,47 @@ async def send_log(guild, msg):
         await channel.send(msg)
 
 
-# ---------------- EXEC (DEV TOOL) ----------------
+# ================= EXEC (DEV TOOL) =================
 @bot.command()
 async def exec(ctx, *, code: str):
+
     if ctx.author.id != OWNER_ID:
         return await ctx.send("Sem permissão.")
 
+    old_stdout = sys.stdout
     buffer = io.StringIO()
+    sys.stdout = buffer
 
     try:
-        # captura prints
-        with contextlib.redirect_stdout(buffer):
-            exec(
-                code,
-                {
-                    "bot": bot,
-                    "ctx": ctx,
-                    "__import__": __import__,
-                }
-            )
+        exec(
+            code,
+            {
+                "bot": bot,
+                "ctx": ctx,
+                "__import__": __import__
+            }
+        )
 
     except Exception:
         buffer.write(traceback.format_exc())
 
+    finally:
+        sys.stdout = old_stdout
+
     output = buffer.getvalue()
 
-    print("EXEC DEBUG OUTPUT:", repr(output))  # logs no Railway
+    print("EXEC DEBUG:", repr(output))  # logs no Railway
 
     if not output.strip():
-        return await ctx.send("SEM OUTPUT (código rodou mas não imprimiu nada)")
+        return await ctx.send("SEM OUTPUT")
 
     await ctx.send(f"```py\n{output[:1900]}```")
-# --------------------------------------------------
+# ===================================================
 
 
 @bot.command()
 async def ping(ctx):
-    await ctx.send(f"Pong! {round(bot.latency*1000)}ms")
+    await ctx.send(f"Pong! {round(bot.latency * 1000)}ms")
 
 
 @bot.command()
