@@ -836,5 +836,6 @@ async def on_ready():
     print(f"Bot online: {bot.user}")
     await load_modules()
 
+print([c.name for c in bot.commands])
 
 bot.run(TOKEN)
