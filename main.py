@@ -988,6 +988,143 @@ async def dashboard(ctx):
     await ctx.send("📊 PAINEL", view=Dash())
 
 # =========================
+# DYNO LOGS v2 (SINGLE BLOCK)
+# =========================
+
+import discord
+
+# CRIA TABELA (RODA UMA VEZ)
+cur.execute("""
+CREATE TABLE IF NOT EXISTS logs_config (
+    guild_id INTEGER PRIMARY KEY,
+    channel_id INTEGER,
+    active INTEGER DEFAULT 1
+)
+""")
+db.commit()
+
+
+# =========================
+# CORE
+# =========================
+
+async def get_log_channel(guild):
+    try:
+        cur.execute(
+            "SELECT channel_id, active FROM logs_config WHERE guild_id=?",
+            (guild.id,)
+        )
+        data = cur.fetchone()
+
+        if not data:
+            return None
+
+        channel_id, active = data
+
+        if active != 1:
+            return None
+
+        return guild.get_channel(channel_id)
+
+    except:
+        return None
+
+
+async def log_send(guild, title, desc, color=0x2b2d31):
+    channel = await get_log_channel(guild)
+    if not channel:
+        return
+
+    try:
+        embed = discord.Embed(
+            title=title,
+            description=desc[:4000],
+            color=color
+        )
+        await channel.send(embed=embed)
+    except:
+        pass
+
+
+# =========================
+# COMMANDS
+# =========================
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def logsetch2(ctx, channel: discord.TextChannel):
+
+    cur.execute("""
+    INSERT OR REPLACE INTO logs_config (guild_id, channel_id, active)
+    VALUES (?, ?, 1)
+    """, (ctx.guild.id, channel.id))
+
+    db.commit()
+
+    await ctx.send(f"✔ Logs ativados em {channel.mention}")
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def unsetlog(ctx):
+
+    cur.execute("""
+    UPDATE logs_config
+    SET active=0
+    WHERE guild_id=?
+    """, (ctx.guild.id,))
+
+    db.commit()
+
+    await ctx.send("❌ Logs desativados")
+
+
+# =========================
+# EVENTS (INJETA NO TEU BOT)
+# =========================
+
+@bot.event
+async def on_message_delete(message):
+    if message.guild:
+        await log_send(
+            message.guild,
+            "🗑 Mensagem apagada",
+            f"{message.author}: {message.content}",
+            0xe74c3c
+        )
+
+
+@bot.event
+async def on_message_edit(before, after):
+    if before.guild:
+        await log_send(
+            before.guild,
+            "✏ Mensagem editada",
+            f"{before.author}\nANTES: {before.content}\nDEPOIS: {after.content}",
+            0xf1c40f
+        )
+
+
+@bot.event
+async def on_member_join(member):
+    await log_send(
+        member.guild,
+        "📥 Entrada",
+        str(member),
+        0x2ecc71
+    )
+
+
+@bot.event
+async def on_member_remove(member):
+    await log_send(
+        member.guild,
+        "📤 Saída",
+        str(member),
+        0xe67e22
+                   )
+
+# =========================
 # RUN BOT
 # =========================
 
