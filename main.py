@@ -1,7 +1,6 @@
 import os
 import discord
 import io
-import sys
 import traceback
 
 from dotenv import load_dotenv
@@ -27,6 +26,61 @@ bot = commands.Bot(
 OWNER_ID = 878075563984707637
 
 
+# ================= CONSOLE PRO =================
+
+class ExecModal(discord.ui.Modal, title="Python Console"):
+
+    code = discord.ui.TextInput(
+        label="Código Python",
+        style=discord.TextStyle.paragraph,
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+
+        if interaction.user.id != OWNER_ID:
+            return await interaction.response.send_message("Sem permissão.", ephemeral=True)
+
+        buffer = io.StringIO()
+
+        try:
+            exec(
+                str(self.code),
+                {
+                    "bot": bot,
+                    "ctx": None,
+                    "__import__": __import__,
+                    "print": lambda *args, **kwargs: print(*args, file=buffer, **kwargs)
+                }
+            )
+
+        except Exception:
+            buffer.write(traceback.format_exc())
+
+        output = buffer.getvalue().strip()
+
+        if not output:
+            output = "SEM OUTPUT"
+
+        await interaction.response.send_message(
+            f"```py\n{output[:1900]}```",
+            ephemeral=True
+        )
+
+
+class ConsoleView(discord.ui.View):
+
+    @discord.ui.button(label="Abrir Console", style=discord.ButtonStyle.primary)
+    async def open_console(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        if interaction.user.id != OWNER_ID:
+            return await interaction.response.send_message("Sem permissão.", ephemeral=True)
+
+        await interaction.response.send_modal(ExecModal())
+
+# =================================================
+
+
 @bot.event
 async def on_ready():
     await db.init()
@@ -45,42 +99,15 @@ async def send_log(guild, msg):
         await channel.send(msg)
 
 
-# ================= EXEC (DEV TOOL) =================
+# ================= COMMANDS =================
+
 @bot.command()
-async def exec(ctx, *, code: str):
+async def console(ctx):
 
     if ctx.author.id != OWNER_ID:
         return await ctx.send("Sem permissão.")
 
-    old_stdout = sys.stdout
-    buffer = io.StringIO()
-    sys.stdout = buffer
-
-    try:
-        exec(
-            code,
-            {
-                "bot": bot,
-                "ctx": ctx,
-                "__import__": __import__
-            }
-        )
-
-    except Exception:
-        buffer.write(traceback.format_exc())
-
-    finally:
-        sys.stdout = old_stdout
-
-    output = buffer.getvalue()
-
-    print("EXEC DEBUG:", repr(output))  # logs no Railway
-
-    if not output.strip():
-        return await ctx.send("SEM OUTPUT")
-
-    await ctx.send(f"```py\n{output[:1900]}```")
-# ===================================================
+    await ctx.send("Console de desenvolvimento:", view=ConsoleView())
 
 
 @bot.command()
