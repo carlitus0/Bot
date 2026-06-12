@@ -238,6 +238,321 @@ async def on_command_error(ctx, error):
         await ctx.send("Sem permissão.")
 
 
+import datetime
+import discord
+from discord.ext import commands
+
+
+@bot.command()
+@commands.has_permissions(moderate_members=True)
+async def mute(ctx, member: discord.Member, minutes: int, *, reason="Sem motivo"):
+
+    if minutes <= 0:
+        return await ctx.send("Tempo inválido.")
+
+    try:
+        duration = datetime.timedelta(minutes=minutes)
+
+        await member.timeout(duration, reason=reason)
+
+        await ctx.send(
+            f"🔇 {member.mention} mutado por {minutes} minuto(s). Motivo: {reason}"
+        )
+
+    except discord.Forbidden:
+        await ctx.send("Sem permissão pra mutar esse usuário.")
+
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+
+@bot.command()
+@commands.has_permissions(moderate_members=True)
+async def unmute(ctx, member: discord.Member):
+
+    try:
+        await member.timeout(None)
+
+        await ctx.send(f"🔊 {member.mention} desmutado.")
+
+    except discord.Forbidden:
+        await ctx.send("Sem permissão.")
+
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+                             import discord
+from discord.ext import commands
+
+
+# =========================
+# CRIAR CARGO
+# =========================
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def criarcargo(ctx, nome: str, cor: str = "default"):
+
+    try:
+        color = discord.Color.default()
+
+        # cores básicas aceitas
+        cores = {
+            "vermelho": discord.Color.red(),
+            "azul": discord.Color.blue(),
+            "verde": discord.Color.green(),
+            "amarelo": discord.Color.gold(),
+            "roxo": discord.Color.purple(),
+            "cinza": discord.Color.greyple(),
+            "preto": discord.Color.dark_grey()
+        }
+
+        if cor.lower() in cores:
+            color = cores[cor.lower()]
+
+        role = await ctx.guild.create_role(
+            name=nome,
+            color=color,
+            reason=f"Criado por {ctx.author}"
+        )
+
+        await ctx.send(f"Cargo criado: {role.mention}")
+
+    except discord.Forbidden:
+        await ctx.send("Sem permissão pra criar cargo.")
+
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+
+# =========================
+# DELETAR CARGO
+# =========================
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def delcargo(ctx, *, role_identifier: str):
+
+    try:
+        role = None
+
+        # tenta por ID
+        if role_identifier.isdigit():
+            role = ctx.guild.get_role(int(role_identifier))
+
+        # tenta por nome
+        if role is None:
+            role = discord.utils.get(ctx.guild.roles, name=role_identifier)
+
+        if role is None:
+            return await ctx.send("Cargo não encontrado.")
+
+        await role.delete(reason=f"Deletado por {ctx.author}")
+
+        await ctx.send(f"Cargo `{role.name}` deletado.")
+
+    except discord.Forbidden:
+        await ctx.send("Sem permissão pra deletar cargo.")
+
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+
+# =========================
+# SETAR CARGO EM MEMBRO
+# =========================
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def setar(ctx, member: discord.Member, *, role: discord.Role):
+
+    try:
+        await member.add_roles(role, reason=f"Setado por {ctx.author}")
+        await ctx.send(f"{member.mention} recebeu o cargo {role.mention}")
+
+    except discord.Forbidden:
+        await ctx.send("Sem permissão pra adicionar cargo.")
+
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+
+import asyncio
+
+# guild_id -> {command_name: task}
+loops = {}
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def loop(ctx, command_name: str, seconds: int = 60):
+
+    guild_id = ctx.guild.id
+
+    if seconds < 5:
+        return await ctx.send("Intervalo mínimo é 5 segundos.")
+
+    if guild_id not in loops:
+        loops[guild_id] = {}
+
+    if command_name in loops[guild_id]:
+        return await ctx.send("Esse loop já está ativo.")
+
+    async def loop_task():
+
+        await ctx.send(f"🔁 Loop iniciado: `{command_name}` ({seconds}s)")
+
+        while True:
+
+            # se foi removido, para loop
+            if guild_id not in loops or command_name not in loops[guild_id]:
+                break
+
+            cmd = bot.get_command(command_name)
+
+            if not cmd:
+                await ctx.send(f"Comando `{command_name}` não existe.")
+                break
+
+            try:
+                await ctx.invoke(cmd)
+            except Exception as e:
+                await ctx.send(f"Erro no loop: {e}")
+
+            await asyncio.sleep(seconds)
+
+    task = asyncio.create_task(loop_task())
+    loops[guild_id][command_name] = task
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def stoploop(ctx, command_name: str = None):
+
+    guild_id = ctx.guild.id
+
+    if guild_id not in loops or not loops[guild_id]:
+        return await ctx.send("Nenhum loop ativo.")
+
+    # parar todos
+    if command_name is None:
+
+        for cmd, task in loops[guild_id].items():
+            task.cancel()
+
+        loops[guild_id].clear()
+
+        return await ctx.send("⛔ Todos os loops foram parados.")
+
+    # parar específico
+    if command_name in loops[guild_id]:
+
+        loops[guild_id][command_name].cancel()
+        del loops[guild_id][command_name]
+
+        await ctx.send(f"⛔ Loop `{command_name}` parado.")
+
+    else:
+        await ctx.send("Esse loop não está ativo.")
+
+import discord
+from discord.ext import commands
+
+
+# =========================
+# CRIAR CANAL
+# =========================
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def criarcanal(ctx, nome: str, tipo: str = "text"):
+
+    try:
+        if tipo.lower() == "voice":
+            channel = await ctx.guild.create_voice_channel(nome)
+        else:
+            channel = await ctx.guild.create_text_channel(nome)
+
+        await ctx.send(f"Canal criado: {channel.mention}")
+
+    except discord.Forbidden:
+        await ctx.send("Sem permissão pra criar canal.")
+
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+
+# =========================
+# DELETAR CANAL
+# =========================
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def delcanal(ctx, canal: discord.TextChannel):
+
+    try:
+        nome = canal.name
+        await canal.delete()
+        await ctx.send(f"Canal `{nome}` deletado.")
+
+    except discord.Forbidden:
+        await ctx.send("Sem permissão pra deletar canal.")
+
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+
+# =========================
+# RENOMEAR CANAL
+# =========================
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def renamecanal(ctx, canal: discord.TextChannel, *, novo_nome: str):
+
+    try:
+        await canal.edit(name=novo_nome)
+        await ctx.send(f"Canal renomeado para `{novo_nome}`")
+
+    except discord.Forbidden:
+        await ctx.send("Sem permissão.")
+
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+
+# =========================
+# TRAVAR CANAL
+# =========================
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def lock(ctx, canal: discord.TextChannel = None):
+
+    canal = canal or ctx.channel
+
+    try:
+        await canal.set_permissions(ctx.guild.default_role, send_messages=False)
+        await ctx.send(f"🔒 Canal {canal.mention} travado.")
+
+    except discord.Forbidden:
+        await ctx.send("Sem permissão.")
+
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
+
+
+# =========================
+# DESTRAVAR CANAL
+# =========================
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def unlock(ctx, canal: discord.TextChannel = None):
+
+    canal = canal or ctx.channel
+
+    try:
+        await canal.set_permissions(ctx.guild.default_role, send_messages=True)
+        await ctx.send(f"🔓 Canal {canal.mention} destravado.")
+
+    except discord.Forbidden:
+        await ctx.send("Sem permissão.")
+
+    except Exception as e:
+        await ctx.send(f"Erro: {e}")
 # ================= RUN =================
 
 bot.run(TOKEN)
