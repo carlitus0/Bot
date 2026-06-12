@@ -819,10 +819,22 @@ class Dashboard(discord.ui.View):
 async def dashboard(ctx):
     await ctx.send("ðŸ“Š CONTROL PANEL", view=Dashboard())
 
+
 import os
 
-for file in os.listdir("./modules"):
-    if file.endswith(".py"):
-        bot.load_extension(f"modules.{file[:-3]}")
+async def load_modules():
+    for file in os.listdir("./modules"):
+        if file.endswith(".py"):
+            try:
+                await bot.load_extension(f"modules.{file[:-3]}")
+                print(f"Loaded: {file}")
+            except Exception as e:
+                print(f"Erro em {file}: {e}")
+
+@bot.event
+async def on_ready():
+    print(f"Bot online: {bot.user}")
+    await load_modules()
+
 
 bot.run(TOKEN)
