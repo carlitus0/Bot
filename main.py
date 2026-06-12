@@ -819,5 +819,10 @@ class Dashboard(discord.ui.View):
 async def dashboard(ctx):
     await ctx.send("ðŸ“Š CONTROL PANEL", view=Dashboard())
 
+import os
+
+for file in os.listdir("./modules"):
+    if file.endswith(".py"):
+        bot.load_extension(f"modules.{file[:-3]}")
 
 bot.run(TOKEN)
