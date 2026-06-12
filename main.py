@@ -281,7 +281,7 @@ async def unmute(ctx, member: discord.Member):
     except Exception as e:
         await ctx.send(f"Erro: {e}")
 
-                             import discord
+import discord
 from discord.ext import commands
 
 
