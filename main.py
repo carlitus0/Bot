@@ -820,16 +820,4 @@ async def dashboard(ctx):
     await ctx.send("ðŸ“Š CONTROL PANEL", view=Dashboard())
 
 
-import discord
-from discord.ext import commands
-import asyncio
-
-intents = discord.Intents.all()
-
-bot = commands.Bot(
-    command_prefix="!",
-    intents=intents,
-    help_command=None
-
-
 bot.run(TOKEN)
