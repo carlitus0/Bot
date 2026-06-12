@@ -380,46 +380,58 @@ import asyncio
 loops = {}
 
 
+import asyncio
+
+loops = {}
+loop_last_msg = {}
+
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def loop(ctx, command_name: str, seconds: int = 60):
 
     guild_id = ctx.guild.id
 
-    if seconds < 5:
-        return await ctx.send("Intervalo mínimo é 5 segundos.")
-
     if guild_id not in loops:
         loops[guild_id] = {}
 
     if command_name in loops[guild_id]:
-        return await ctx.send("Esse loop já está ativo.")
+        return await ctx.send("Loop já ativo.")
 
-    async def loop_task():
+    async def task():
 
-        await ctx.send(f"🔁 Loop iniciado: `{command_name}` ({seconds}s)")
+        await ctx.send(f"🔁 Loop iniciado: {command_name}")
 
-        while True:
-
-            # se foi removido, para loop
-            if guild_id not in loops or command_name not in loops[guild_id]:
-                break
+        while command_name in loops.get(guild_id, {}):
 
             cmd = bot.get_command(command_name)
 
             if not cmd:
-                await ctx.send(f"Comando `{command_name}` não existe.")
+                await ctx.send("Comando não existe.")
                 break
 
             try:
-                await ctx.invoke(cmd)
+                # executa comando
+                msg = await ctx.invoke(cmd)
+
+                # tenta guardar mensagem retornada
+                if msg:
+                    loop_last_msg[(guild_id, command_name)] = msg
+
+                # apaga anterior
+                key = (guild_id, command_name)
+                if key in loop_last_msg:
+                    try:
+                        await loop_last_msg[key].delete()
+                    except:
+                        pass
+
             except Exception as e:
                 await ctx.send(f"Erro no loop: {e}")
 
             await asyncio.sleep(seconds)
 
-    task = asyncio.create_task(loop_task())
-    loops[guild_id][command_name] = task
+    loops[guild_id][command_name] = asyncio.create_task(task())
 
 
 @bot.command()
@@ -428,32 +440,33 @@ async def stoploop(ctx, command_name: str = None):
 
     guild_id = ctx.guild.id
 
-    if guild_id not in loops or not loops[guild_id]:
+    if guild_id not in loops:
         return await ctx.send("Nenhum loop ativo.")
 
-    # parar todos
     if command_name is None:
 
-        for cmd, task in loops[guild_id].items():
-            task.cancel()
+        for t in loops[guild_id].values():
+            t.cancel()
 
         loops[guild_id].clear()
+        return await ctx.send("Todos loops parados.")
 
-        return await ctx.send("⛔ Todos os loops foram parados.")
-
-    # parar específico
     if command_name in loops[guild_id]:
 
         loops[guild_id][command_name].cancel()
         del loops[guild_id][command_name]
 
-        await ctx.send(f"⛔ Loop `{command_name}` parado.")
+        key = (guild_id, command_name)
 
-    else:
-        await ctx.send("Esse loop não está ativo.")
+        if key in loop_last_msg:
+            try:
+                await loop_last_msg[key].delete()
+            except:
+                pass
 
-import discord
-from discord.ext import commands
+            del loop_last_msg[key]
+
+        await ctx.send(f"Loop {command_name} parado.")
 
 
 # =========================
