@@ -819,5 +819,179 @@ class Dashboard(discord.ui.View):
 async def dashboard(ctx):
     await ctx.send("📊 CONTROL PANEL", view=Dashboard())
 
+import discord
+from discord.ext import commands
+import asyncio
+import sqlite3
+
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# =========================
+# GLOBAL STATE
+# =========================
+
+log_channel_v2 = None
+troll_map = {}  # user_id -> phrase
+
+# =========================
+# DB (AUTO SYSTEMS)
+# =========================
+
+db = sqlite3.connect("system.db")
+cur = db.cursor()
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS automsg (
+    channel_id INTEGER,
+    message TEXT,
+    interval INTEGER
+)
+""")
+
+db.commit()
+
+# =========================
+# LOG SYSTEM V2
+# =========================
+
+async def logv2(text):
+    if not log_channel_v2:
+        return
+
+    ch = bot.get_channel(log_channel_v2)
+    if ch:
+        await ch.send(f"📊 LOG V2\n{text}")
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setchlogv2(ctx, channel: discord.TextChannel):
+    global log_channel_v2
+    log_channel_v2 = channel.id
+    await ctx.send(f"✔ Logs V2 ativado em {channel.mention}")
+
+# =========================
+# EVENT LOGS
+# =========================
+
+@bot.event
+async def on_command(ctx):
+    await logv2(f"CMD {ctx.author}: {ctx.message.content}")
+
+
+@bot.event
+async def on_member_ban(guild, user):
+    await logv2(f"BAN {user} ({user.id})")
+
+
+@bot.event
+async def on_member_unban(guild, user):
+    await logv2(f"UNBAN {user} ({user.id})")
+
+
+@bot.event
+async def on_message_delete(message):
+    if message.author.bot:
+        return
+    await logv2(f"DELETE {message.author}: {message.content}")
+
+# =========================
+# TROLL SYSTEM
+# =========================
+
+@bot.command()
+async def troll(ctx, member: discord.Member, duration: int, *, phrase: str):
+    troll_map[member.id] = phrase
+
+    await ctx.send(f"✔ Troll ativo {member.mention} ({duration}s)")
+
+    async def stop():
+        await asyncio.sleep(duration)
+        troll_map.pop(member.id, None)
+
+    asyncio.create_task(stop())
+
+
+@bot.command()
+async def stoptroll(ctx, member: discord.Member):
+    troll_map.pop(member.id, None)
+    await ctx.send(f"🛑 Troll parado {member.mention}")
+
+# =========================
+# AUTO MESSAGE LOOP
+# =========================
+
+async def auto_message(channel_id, message, interval):
+    ch = bot.get_channel(channel_id)
+    if not ch:
+        return
+
+    while True:
+        await ch.send(message)
+        await asyncio.sleep(interval)
+
+# =========================
+# AUTO DELETE LOOP
+# =========================
+
+async def auto_delete(channel_id, delay):
+    ch = bot.get_channel(channel_id)
+    if not ch:
+        return
+
+    while True:
+        await asyncio.sleep(delay)
+
+        try:
+            async for m in ch.history(limit=20):
+                await m.delete()
+        except:
+            pass
+
+# =========================
+# ON MESSAGE (TROLL ENGINE)
+# =========================
+
+@bot.event
+async def on_message(message):
+
+    if message.author.bot:
+        return
+
+    if message.author.id in troll_map:
+        await message.channel.send(troll_map[message.author.id])
+
+    await bot.process_commands(message)
+
+# =========================
+# DASHBOARD (UI SIMPLES)
+# =========================
+
+class Dash(discord.ui.View):
+
+    @discord.ui.button(label="Embed", style=discord.ButtonStyle.primary)
+    async def embed(self, i, b):
+        await i.response.send_message("Embed system placeholder", ephemeral=True)
+
+    @discord.ui.button(label="AutoMsg", style=discord.ButtonStyle.success)
+    async def auto(self, i, b):
+        await i.response.send_message("AutoMsg placeholder", ephemeral=True)
+
+    @discord.ui.button(label="AutoDel", style=discord.ButtonStyle.danger)
+    async def delb(self, i, b):
+        await i.response.send_message("AutoDelete placeholder", ephemeral=True)
+
+
+@bot.command()
+async def dashboard(ctx):
+    await ctx.send("📊 PAINEL", view=Dash())
+
+# =========================
+# RUN BOT
+# =========================
+
+
+
 
 bot.run(TOKEN)
