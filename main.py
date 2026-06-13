@@ -819,5 +819,8 @@ class Dashboard(discord.ui.View):
 async def dashboard(ctx):
     await ctx.send("ðŸ“Š CONTROL PANEL", view=Dashboard())
 
+@bot.event
+async def on_guild_join(guild):
+    print(f"ENTREI EM: {guild.name} ({guild.id})")
 
 bot.run(TOKEN)
