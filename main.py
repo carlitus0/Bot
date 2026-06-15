@@ -1,36 +1,33 @@
 import os
 import asyncio
-
 import discord
+
 from discord.ext import commands
-from dotenv import load_dotenv
+from config import TOKEN, PREFIX
 
-import config
 
-load_dotenv()
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
 
-TOKEN = os.getenv("TOKEN")
-
-intents = discord.Intents.all()
 
 bot = commands.Bot(
-    command_prefix=config.PREFIX,
+    command_prefix=PREFIX,
     intents=intents,
     help_command=None
 )
 
 
-async def load_cogs():
-    for arquivo in os.listdir("./cogs"):
-        if arquivo.endswith(".py"):
-            await bot.load_extension(
-                f"cogs.{arquivo[:-3]}"
-            )
-
-
 @bot.event
 async def on_ready():
-    print(f"Logado como {bot.user}")
+    print(f"{bot.user} está online!")
+
+
+async def load_cogs():
+    for file in os.listdir("./cogs"):
+        if file.endswith(".py") and not file.startswith("__"):
+            await bot.load_extension(f"cogs.{file[:-3]}")
+            print(f"Cog carregada: {file}")
 
 
 async def main():
