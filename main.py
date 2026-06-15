@@ -29,6 +29,7 @@ async def load_cogs():
             await bot.load_extension(f"cogs.{file[:-3]}")
             print(f"Cog carregada: {file}")
 
+import database.database
 
 async def main():
     async with bot:
