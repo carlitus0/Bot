@@ -6,6 +6,7 @@ from datetime import datetime
 import json
 import asyncio
 from discord.ui import View, Button
+import sqlite3
 
 TOKEN = os.getenv("TOKEN")
 
