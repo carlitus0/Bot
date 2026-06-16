@@ -162,7 +162,7 @@ async def command_error(ctx, error):
         raise error
 @bot.command()
 @is_staff()
-async def unban(ctx, user_id: int, *, motivo="Nenhum motivo informado"):
+async def rban(ctx, user_id: int, *, motivo="Nenhum motivo informado"):
 
     try:
         user = await bot.fetch_user(user_id)
