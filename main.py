@@ -441,9 +441,11 @@ async def warns(ctx, member: discord.Member):
 # ======================
 # RUN BOT (SÓ UMA VEZ)
 # ======================
-("TOKEN")
-
 import os
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv("TOKEN")
+
+if not TOKEN:
+    raise ValueError("TOKEN não foi definida no ambiente (Railway).")
+
 bot.run(TOKEN)
