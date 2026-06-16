@@ -441,4 +441,9 @@ async def warns(ctx, member: discord.Member):
 # ======================
 # RUN BOT (SÓ UMA VEZ)
 # ======================
-bot.run("TOKEN")
+("TOKEN")
+
+import os
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+bot.run(TOKEN)
