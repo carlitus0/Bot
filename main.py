@@ -1696,10 +1696,10 @@ async def panelstaff(ctx):
         ),
         inline=False
     )
+await ctx.send(
+    embed=embed,
+    view=StaffPanel()
+)
 
-    await ctx.send(
-        embed=embed,
-        view=StaffPanel()
 
-    bot.run(TOKEN)
-    )
+bot.run(TOKEN)
