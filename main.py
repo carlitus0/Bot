@@ -23,7 +23,15 @@ bot = commands.Bot(
 # Lista temporária de staff
 staff_roles = set()
 staff_users = set()
+def has_staff_permission(member):
 
+    if member.guild_permissions.administrator:
+        return True
+
+    if member.id in staff_users:
+        return True
+
+    return any(role.id in staff_roles for role in member.roles)
 
 @bot.event
 async def on_ready():
@@ -258,13 +266,15 @@ async def mute(
         )
 
     # Verifica se o bot possui permissão
-    if not ctx.guild.me.guild_permissions.moderate_members:
+    bot_member = ctx.guild.get_member(bot.user.id)
+
+if not bot_member.guild_permissions.moderate_members:
         return await ctx.send(
             "❌ Eu não tenho a permissão 'Moderar membros'."
         )
 
     # Verifica hierarquia do bot
-    if member.top_role >= ctx.guild.me.top_role:
+if member.top_role >= bot_member.top_role:
         return await ctx.send(
             "❌ Meu cargo precisa estar acima do cargo deste usuário."
         )
@@ -681,9 +691,10 @@ async def warn_error(ctx, error):
 @bot.command()
 async def hackban(ctx, user_id: int, *, motivo="Nenhum motivo informado"):
 
-    if not await is_staff(ctx.author):
-        return await ctx.send("❌ Você não possui permissão para usar este comando.")
-
+if not has_staff_permission(ctx.author):
+    return await ctx.send(
+        "❌ Você não possui permissão para usar este comando."
+    )
     try:
         user = await bot.fetch_user(user_id)
 
@@ -822,13 +833,19 @@ async def unban(ctx, user_id: int, *, motivo="Nenhum motivo informado"):
 async def hackban_unban_error(ctx, error):
 
     if isinstance(error, commands.MissingRequiredArgument):
+
         if ctx.command.name == "hackban":
-            await ctx.send("❌ Use: `!hackban <id> <motivo>`")
-        else:
-            await ctx.send("❌ Use: `!unban <id> <motivo>`")
+            await ctx.send(
+                "❌ Uso correto: `!hackban <id> <motivo>`"
+            )
+
+        elif ctx.command.name == "unban":
+            await ctx.send(
+                "❌ Uso correto: `!unban <id> <motivo>`"
+            )
 
     elif isinstance(error, commands.BadArgument):
-        await ctx.send("❌ Informe um ID válido.")
+        await ctx.send("❌ O ID informado é inválido.")
 
     else:
         raise error
@@ -1703,4 +1720,10 @@ async def panelstaff(ctx):
         view=StaffPanel()
     )
 
+@bot.command()
+async def ping(ctx):
+    latency = round(bot.latency * 1000)
+
+    await ctx.send(f"🏓 Pong! `{latency}ms`")
+    
 bot.run(TOKEN)
