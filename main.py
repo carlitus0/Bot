@@ -2365,4 +2365,615 @@ async def resetnick(ctx, member: discord.Member):
     await ctx.send(
         f"✅ Apelido de {member.mention} resetado."
         )
+    # ============================================================
+# 🎉 GIVEAWAY / 🎯 VOTAÇÃO / 💤 AFK / 📈 XP / 🛠️ PAINÉIS
+# ============================================================
+
+import random
+
+# -------------------- DATABASE EXTRA --------------------
+
+conn = sqlite3.connect(DB_FILE)
+cur = conn.cursor()
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS user_xp (
+    guild_id INTEGER,
+    user_id INTEGER,
+    xp INTEGER DEFAULT 0,
+    level INTEGER DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id)
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS afk (
+    guild_id INTEGER,
+    user_id INTEGER,
+    reason TEXT,
+    since TEXT,
+    PRIMARY KEY (guild_id, user_id)
+)
+""")
+
+conn.commit()
+conn.close()
+
+
+# -------------------- XP --------------------
+
+xp_cooldown = {}
+
+def get_xp(guild_id, user_id):
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT xp, level FROM user_xp WHERE guild_id=? AND user_id=?",
+        (guild_id, user_id)
+    )
+
+    result = cur.fetchone()
+
+    if not result:
+        cur.execute(
+            "INSERT INTO user_xp VALUES (?, ?, 0, 0)",
+            (guild_id, user_id)
+        )
+        conn.commit()
+        result = (0, 0)
+
+    conn.close()
+    return result
+
+
+def add_xp(guild_id, user_id, amount):
+    xp, level = get_xp(guild_id, user_id)
+
+    xp += amount
+    new_level = int((xp / 100) ** 0.5)
+
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute("""
+        UPDATE user_xp
+        SET xp=?, level=?
+        WHERE guild_id=? AND user_id=?
+    """, (xp, new_level, guild_id, user_id))
+
+    conn.commit()
+    conn.close()
+
+    return xp, level, new_level
+
+
+@bot.command()
+async def rank(ctx, member: discord.Member = None):
+    member = member or ctx.author
+
+    xp, level = get_xp(ctx.guild.id, member.id)
+
+    await ctx.send(
+        f"📈 **Rank de {member.display_name}**\n"
+        f"**Level:** {level}\n"
+        f"**XP:** {xp}"
+    )
+
+
+@bot.command()
+async def leaderboard(ctx):
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT user_id, xp, level
+        FROM user_xp
+        WHERE guild_id=?
+        ORDER BY xp DESC
+        LIMIT 10
+    """, (ctx.guild.id,))
+
+    users = cur.fetchall()
+    conn.close()
+
+    if not users:
+        return await ctx.send("❌ Ainda não existem dados de XP.")
+
+    texto = ""
+
+    for i, (user_id, xp, level) in enumerate(users, 1):
+        member = ctx.guild.get_member(user_id)
+        nome = member.display_name if member else f"ID {user_id}"
+
+        texto += f"**{i}.** {nome} — Level {level} • {xp} XP\n"
+
+    embed = discord.Embed(
+        title="🏆 Ranking de XP",
+        description=texto,
+        color=discord.Color.gold()
+    )
+
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def resetxp(ctx, member: discord.Member):
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute(
+        "DELETE FROM user_xp WHERE guild_id=? AND user_id=?",
+        (ctx.guild.id, member.id)
+    )
+
+    conn.commit()
+    conn.close()
+
+    await ctx.send(f"✅ XP de {member.mention} resetado.")
+
+
+# -------------------- AFK --------------------
+
+@bot.command()
+async def afk(ctx, *, reason="Não informado"):
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT OR REPLACE INTO afk
+        VALUES (?, ?, ?, ?)
+    """, (
+        ctx.guild.id,
+        ctx.author.id,
+        reason,
+        now().isoformat()
+    ))
+
+    conn.commit()
+    conn.close()
+
+    await ctx.send(
+        f"💤 {ctx.author.mention} agora está AFK.\n"
+        f"**Motivo:** {reason}"
+    )
+
+
+def get_afk(guild_id, user_id):
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT reason, since FROM afk WHERE guild_id=? AND user_id=?",
+        (guild_id, user_id)
+    )
+
+    result = cur.fetchone()
+    conn.close()
+
+    return result
+
+
+def remove_afk(guild_id, user_id):
+    conn = sqlite3.connect(DB_FILE)
+    cur = conn.cursor()
+
+    cur.execute(
+        "DELETE FROM afk WHERE guild_id=? AND user_id=?",
+        (guild_id, user_id)
+    )
+
+    conn.commit()
+    conn.close()
+
+
+# -------------------- EVENTO XP + AFK --------------------
+
+@bot.event
+async def on_message_extra(message):
+    pass
+
+
+# -------------------- VOTAÇÃO --------------------
+
+class PollView(View):
+    def __init__(self, options):
+        super().__init__(timeout=None)
+        self.votes = {}
+        self.options = options
+
+        for i, option in enumerate(options[:5]):
+            button = Button(
+                label=option[:80],
+                style=discord.ButtonStyle.primary,
+                custom_id=f"poll_{i}_{random.randint(1000,9999)}"
+            )
+
+            async def callback(interaction, index=i):
+                self.votes[interaction.user.id] = index
+
+                await interaction.response.send_message(
+                    f"✅ Você votou em **{self.options[index]}**.",
+                    ephemeral=True
+                )
+
+            button.callback = callback
+            self.add_item(button)
+
+
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def votacao(ctx, *, texto):
+    partes = [x.strip() for x in texto.split("|")]
+
+    if len(partes) < 3:
+        return await ctx.send(
+            "❌ Use:\n"
+            "`!votacao Pergunta | Opção 1 | Opção 2`"
+        )
+
+    pergunta = partes[0]
+    opcoes = partes[1:6]
+
+    view = PollView(opcoes)
+
+    embed = discord.Embed(
+        title="📊 Votação",
+        description=f"**{pergunta}**",
+        color=discord.Color.blurple()
+    )
+
+    embed.set_footer(text=f"Criada por {ctx.author}")
+
+    await ctx.send(embed=embed, view=view)
+
+
+# -------------------- GIVEAWAY --------------------
+
+class GiveawayView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.participantes = set()
+
+    @discord.ui.button(
+        label="Participar",
+        emoji="🎉",
+        style=discord.ButtonStyle.success,
+        custom_id="giveaway_join"
+    )
+    async def participar(self, interaction, button):
+        if interaction.user.id in self.participantes:
+            self.participantes.remove(interaction.user.id)
+
+            return await interaction.response.send_message(
+                "❌ Você saiu do giveaway.",
+                ephemeral=True
+            )
+
+        self.participantes.add(interaction.user.id)
+
+        await interaction.response.send_message(
+            "🎉 Você entrou no giveaway!",
+            ephemeral=True
+        )
+
+
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def giveaway(ctx, segundos: int, vencedores: int, *, premio):
+    if segundos <= 0 or vencedores <= 0:
+        return await ctx.send("❌ Valores inválidos.")
+
+    view = GiveawayView()
+
+    embed = discord.Embed(
+        title="🎉 GIVEAWAY",
+        description=(
+            f"**Prêmio:** {premio}\n"
+            f"**Vencedores:** {vencedores}\n"
+            f"**Termina em:** {segundos} segundos\n\n"
+            f"Clique no botão abaixo para participar!"
+        ),
+        color=discord.Color.gold()
+    )
+
+    embed.set_footer(text=f"Criado por {ctx.author}")
+
+    mensagem = await ctx.send(embed=embed, view=view)
+
+    await asyncio.sleep(segundos)
+
+    if not view.participantes:
+        return await mensagem.edit(
+            embed=discord.Embed(
+                title="🎉 GIVEAWAY ENCERRADO",
+                description=f"**Prêmio:** {premio}\n\n❌ Ninguém participou.",
+                color=discord.Color.red()
+            ),
+            view=None
+        )
+
+    participantes = list(view.participantes)
+    quantidade = min(vencedores, len(participantes))
+    vencedores_ids = random.sample(participantes, quantidade)
+
+    mentions = ", ".join(f"<@{x}>" for x in vencedores_ids)
+
+    await mensagem.edit(
+        embed=discord.Embed(
+            title="🎉 GIVEAWAY ENCERRADO",
+            description=(
+                f"**Prêmio:** {premio}\n\n"
+                f"🏆 **Vencedor(es):** {mentions}"
+            ),
+            color=discord.Color.green()
+        ),
+        view=None
+    )
+
+    await ctx.send(
+        f"🎉 Parabéns {mentions}! Vocês ganharam **{premio}**!"
+    )
+
+
+# -------------------- PAINEL DE MODERAÇÃO --------------------
+
+class ModerationPanel(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Limpar mensagens",
+        emoji="🧹",
+        style=discord.ButtonStyle.primary,
+        custom_id="panel_clear"
+    )
+    async def clear(self, interaction, button):
+        if not interaction.user.guild_permissions.manage_messages:
+            return await interaction.response.send_message(
+                "❌ Você não tem permissão.",
+                ephemeral=True
+            )
+
+        await interaction.response.send_message(
+            "Use `!clear <quantidade>` para limpar mensagens.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Banir",
+        emoji="🔨",
+        style=discord.ButtonStyle.danger,
+        custom_id="panel_ban"
+    )
+    async def ban(self, interaction, button):
+        await interaction.response.send_message(
+            "Use `!ban @usuário motivo`.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Mute",
+        emoji="🔇",
+        style=discord.ButtonStyle.secondary,
+        custom_id="panel_mute"
+    )
+    async def mute(self, interaction, button):
+        await interaction.response.send_message(
+            "Use `!mute @usuário duração motivo`.",
+            ephemeral=True
+        )
+
+
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def modpanel(ctx):
+    embed = discord.Embed(
+        title="🛡️ Painel de Moderação",
+        description=(
+            "Use os botões abaixo para acessar as principais "
+            "funções de moderação."
+        ),
+        color=discord.Color.red()
+    )
+
+    await ctx.send(
+        embed=embed,
+        view=ModerationPanel()
+    )
+
+
+# -------------------- PAINEL DE CONFIGURAÇÃO --------------------
+
+class ConfigPanel(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Logs",
+        emoji="📋",
+        style=discord.ButtonStyle.primary,
+        custom_id="config_logs"
+    )
+    async def logs(self, interaction, button):
+        await interaction.response.send_message(
+            "Use `!setlog #canal` para configurar os logs.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Staff",
+        emoji="🛡️",
+        style=discord.ButtonStyle.primary,
+        custom_id="config_staff"
+    )
+    async def staff(self, interaction, button):
+        await interaction.response.send_message(
+            "Use `!setstaff @cargo` para configurar a staff.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Automod",
+        emoji="🤖",
+        style=discord.ButtonStyle.success,
+        custom_id="config_automod"
+    )
+    async def automod(self, interaction, button):
+        await interaction.response.send_message(
+            "Use `!automod` e `!automodconfig` para configurar o Automod.",
+            ephemeral=True
+        )
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def configpanel(ctx):
+    embed = discord.Embed(
+        title="⚙️ Painel de Configuração",
+        description=(
+            "Configure os principais sistemas do servidor.\n\n"
+            "📋 Logs\n"
+            "🛡️ Staff\n"
+            "🤖 Automod"
+        ),
+        color=discord.Color.blurple()
+    )
+
+    await ctx.send(
+        embed=embed,
+        view=ConfigPanel()
+    )
+
+
+# -------------------- PAINEL DE EVENTOS --------------------
+
+class EventsPanel(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Giveaway",
+        emoji="🎉",
+        style=discord.ButtonStyle.success,
+        custom_id="events_giveaway"
+    )
+    async def giveaway_button(self, interaction, button):
+        await interaction.response.send_message(
+            "Use `!giveaway <segundos> <vencedores> <prêmio>`.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Votação",
+        emoji="📊",
+        style=discord.ButtonStyle.primary,
+        custom_id="events_poll"
+    )
+    async def poll_button(self, interaction, button):
+        await interaction.response.send_message(
+            "Use `!votacao pergunta | opção 1 | opção 2`.",
+            ephemeral=True
+        )
+
+
+@bot.command()
+@commands.has_permissions(manage_guild=True)
+async def eventpanel(ctx):
+    embed = discord.Embed(
+        title="🎉 Painel de Eventos",
+        description=(
+            "Gerencie eventos do servidor.\n\n"
+            "🎉 Giveaways\n"
+            "📊 Votações"
+        ),
+        color=discord.Color.gold()
+    )
+
+    await ctx.send(
+        embed=embed,
+        view=EventsPanel()
+    )
+
+
+# -------------------- PAINEL PRINCIPAL --------------------
+
+class MainPanel(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Moderação",
+        emoji="🛡️",
+        style=discord.ButtonStyle.danger,
+        custom_id="main_moderation"
+    )
+    async def moderation(self, interaction, button):
+        await interaction.response.send_message(
+            "🛡️ Use `!modpanel` para abrir o painel de moderação.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Configuração",
+        emoji="⚙️",
+        style=discord.ButtonStyle.primary,
+        custom_id="main_config"
+    )
+    async def config(self, interaction, button):
+        await interaction.response.send_message(
+            "⚙️ Use `!configpanel` para abrir o painel de configuração.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="Eventos",
+        emoji="🎉",
+        style=discord.ButtonStyle.success,
+        custom_id="main_events"
+    )
+    async def events(self, interaction, button):
+        await interaction.response.send_message(
+            "🎉 Use `!eventpanel` para abrir o painel de eventos.",
+            ephemeral=True
+        )
+
+    @discord.ui.button(
+        label="XP",
+        emoji="📈",
+        style=discord.ButtonStyle.secondary,
+        custom_id="main_xp"
+    )
+    async def xp(self, interaction, button):
+        await interaction.response.send_message(
+            "📈 Use `!rank` ou `!leaderboard` para consultar o XP.",
+            ephemeral=True
+        )
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def panel(ctx):
+    embed = discord.Embed(
+        title="🎛️ Painel Principal",
+        description=(
+            "Central de gerenciamento do servidor.\n\n"
+            "🛡️ Moderação\n"
+            "⚙️ Configuração\n"
+            "🎉 Eventos\n"
+            "📈 XP"
+        ),
+        color=discord.Color.blurple()
+    )
+
+    await ctx.send(
+        embed=embed,
+        view=MainPanel()
+    )
+
+
+# ============================================================
+# FIM — DEIXE bot.run(TOKEN) ABAIXO DESTE BLOCO
+# ============================================================
 bot.run(TOKEN)
