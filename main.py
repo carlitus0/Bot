@@ -531,10 +531,6 @@ async def send_normal_log(guild, embed):
 async def on_ready():
     init_db()
 
-    bot.add_view(TicketView())
-    bot.add_view(CloseTicketView())
-    bot.add_view(StaffPanelView())
-    bot.add_view(ConsoleView())
 
     print(
         f"Bot online: {bot.user} | "
