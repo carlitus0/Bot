@@ -21,13 +21,15 @@ bot = commands.Bot(
     help_command=None
 )
 
-# Lista temporária de staff
+# =========================
+# STAFF
+# =========================
+
 staff_roles = set()
 staff_users = set()
 
 
 def has_staff_permission(member):
-
     if member.guild_permissions.administrator:
         return True
 
@@ -37,31 +39,23 @@ def has_staff_permission(member):
     return any(role.id in staff_roles for role in member.roles)
 
 
-@bot.event
-async def on_ready():
-    print(f"✅ Bot conectado como {bot.user}")
-
-
 def is_staff():
     async def predicate(ctx):
-
-        if ctx.author.guild_permissions.administrator:
+        if has_staff_permission(ctx.author):
             return True
-
-        if ctx.author.id in staff_users:
-            return True
-
-        for role in ctx.author.roles:
-            if role.id in staff_roles:
-                return True
 
         raise commands.CheckFailure
 
     return commands.check(predicate)
 
 
+@bot.event
+async def on_ready():
+    print(f"✅ Bot conectado como {bot.user}")
+
+
 # =========================
-# STAFF
+# STAFF / UNSTAFF
 # =========================
 
 @bot.command()
@@ -108,16 +102,16 @@ async def unstaff(ctx, alvo: discord.Role | discord.Member):
 
 @bot.command()
 @is_staff()
-async def ban(
-    ctx,
-    member: discord.Member,
-    *,
-    motivo="Nenhum motivo informado"
-):
+async def ban(ctx, member: discord.Member, *, motivo="Nenhum motivo informado"):
 
     if member == ctx.author:
         return await ctx.send(
             "❌ Você não pode banir a si mesmo."
+        )
+
+    if member == ctx.guild.owner:
+        return await ctx.send(
+            "❌ Você não pode banir o dono do servidor."
         )
 
     if (
@@ -126,11 +120,6 @@ async def ban(
     ):
         return await ctx.send(
             "❌ Você não pode banir alguém com cargo igual ou superior ao seu."
-        )
-
-    if member == ctx.guild.owner:
-        return await ctx.send(
-            "❌ Você não pode banir o dono do servidor."
         )
 
     if member.top_role >= ctx.guild.me.top_role:
@@ -190,50 +179,12 @@ async def ban(
 
 
 # =========================
-# ERROS DE BAN / STAFF
-# =========================
-
-@staff.error
-@unstaff.error
-@ban.error
-async def command_error(ctx, error):
-
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send(
-            "❌ Você não possui permissão para usar este comando."
-        )
-
-    elif isinstance(error, commands.CheckFailure):
-        await ctx.send(
-            "❌ Apenas membros da staff podem usar este comando."
-        )
-
-    elif isinstance(error, commands.MemberNotFound):
-        await ctx.send(
-            "❌ Usuário não encontrado."
-        )
-
-    elif isinstance(error, commands.MissingRequiredArgument):
-        await ctx.send(
-            "❌ Faltam argumentos no comando."
-        )
-
-    else:
-        raise error
-
-
-# =========================
 # RBAN
 # =========================
 
 @bot.command()
 @is_staff()
-async def rban(
-    ctx,
-    user_id: int,
-    *,
-    motivo="Nenhum motivo informado"
-):
+async def rban(ctx, user_id: int, *, motivo="Nenhum motivo informado"):
 
     try:
         user = await bot.fetch_user(user_id)
@@ -358,9 +309,7 @@ async def mute(
             "❌ O tempo máximo de timeout é 28 dias (40320 minutos)."
         )
 
-    until = utcnow() + timedelta(
-        minutes=minutos
-    )
+    until = utcnow() + timedelta(minutes=minutos)
 
     embed_dm = discord.Embed(
         title="🔇 Você recebeu um timeout",
@@ -657,9 +606,7 @@ async def warn(
 
         embed_ban = discord.Embed(
             title="🔨 Você foi banido",
-            description=(
-                "Você atingiu o limite máximo de advertências permitido."
-            ),
+            description="Você atingiu o limite máximo de advertências permitido.",
             color=discord.Color.red(),
             timestamp=datetime.utcnow()
         )
@@ -903,4 +850,52 @@ async def hackban(
 
         await ctx.send(
             f"✅ Usuário `{user}` (`{user.id}`) foi banido por ID.\n"
-            f"📝 Motivo: 
+            f"📝 Motivo: `{motivo}`"
+        )
+
+    except discord.NotFound:
+        await ctx.send(
+            "❌ Usuário não encontrado."
+        )
+
+    except discord.Forbidden:
+        await ctx.send(
+            "❌ Não tenho permissão para realizar este banimento."
+        )
+
+    except Exception as e:
+        await ctx.send(
+            f"❌ Ocorreu um erro: `{e}`"
+        )
+
+
+# =========================
+# UNBAN
+# =========================
+
+@bot.command()
+async def unban(
+    ctx,
+    user_id: int,
+    *,
+    motivo="Nenhum motivo informado"
+):
+
+    if not has_staff_permission(ctx.author):
+        return await ctx.send(
+            "❌ Você não possui permissão para usar este comando."
+        )
+
+    try:
+        user = await bot.fetch_user(
+            user_id
+        )
+
+        await ctx.guild.unban(
+            user,
+            reason=f"{motivo} | Staff: {ctx.author}"
+        )
+
+        embed = Embed(
+            title="🔓 Seu banimento foi removido",
+            description="Você pode e
