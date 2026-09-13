@@ -1950,5 +1950,419 @@ if not TOKEN:
     )
 
 init_db()
+# =========================================================
+# 🖥️ CONSOLE PYTHON — OWNER ONLY
+# =========================================================
 
+class ConsoleModal(Modal, title="Python Console"):
+    codigo = TextInput(
+        label="Código Python",
+        placeholder="Digite o código que deseja executar...",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=4000
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.user.id != interaction.guild.owner_id:
+            return await interaction.response.send_message(
+                "❌ Apenas o dono do servidor pode usar o Console.",
+                ephemeral=True
+            )
+
+        codigo = self.codigo.value
+
+        ambiente = {
+            "bot": bot,
+            "guild": interaction.guild,
+            "user": interaction.user,
+            "discord": discord,
+            "asyncio": asyncio
+        }
+
+        try:
+            resultado = await asyncio.to_thread(
+                eval,
+                compile(codigo, "<console>", "eval"),
+                {"__builtins__": {}},
+                ambiente
+            )
+
+            resultado = str(resultado)
+
+        except SyntaxError:
+            try:
+                exec(
+                    compile(codigo, "<console>", "exec"),
+                    {"__builtins__": {}},
+                    ambiente
+                )
+                resultado = "Código executado com sucesso."
+
+            except Exception as e:
+                resultado = f"{type(e).__name__}: {e}"
+
+        except Exception as e:
+            resultado = f"{type(e).__name__}: {e}"
+
+        if len(resultado) > 1900:
+            resultado = resultado[:1900] + "..."
+
+        embed = discord.Embed(
+            title="🖥️ Python Console",
+            color=discord.Color.blurple()
+        )
+
+        embed.add_field(
+            name="Código",
+            value=f"```py\n{codigo[:900]}\n```",
+            inline=False
+        )
+
+        embed.add_field(
+            name="Resultado",
+            value=f"```py\n{resultado}\n```",
+            inline=False
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
+
+
+class ConsoleView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Python Console",
+        emoji="🐍",
+        style=discord.ButtonStyle.primary,
+        custom_id="console_python"
+    )
+    async def console(
+        self,
+        interaction: discord.Interaction,
+        button: Button
+    ):
+        if not interaction.guild:
+            return
+
+        if interaction.user.id != interaction.guild.owner_id:
+            return await interaction.response.send_message(
+                "❌ Apenas o dono do servidor pode usar o Console.",
+                ephemeral=True
+            )
+
+        await interaction.response.send_modal(
+            ConsoleModal()
+        )
+
+
+@bot.command()
+@commands.is_owner()
+async def console(ctx):
+    embed = discord.Embed(
+        title="🖥️ Python Console",
+        description=(
+            "Console administrativo do bot.\n\n"
+            "🐍 Execute código Python diretamente pelo painel.\n"
+            "🔒 Acesso exclusivo ao dono do bot."
+        ),
+        color=discord.Color.blurple()
+    )
+
+    embed.set_footer(
+        text=f"Solicitado por {ctx.author}"
+    )
+
+    await ctx.send(
+        embed=embed,
+        view=ConsoleView()
+    )
+
+
+# =========================================================
+# ✨ NOVOS COMANDOS
+# =========================================================
+
+@bot.command()
+@commands.has_permissions(manage_messages=True)
+async def slowmode(ctx, seconds: int):
+    if seconds < 0 or seconds > 21600:
+        return await ctx.send(
+            "❌ O tempo deve estar entre `0` e `21600` segundos."
+        )
+
+    await ctx.channel.edit(
+        slowmode_delay=seconds
+    )
+
+    if seconds == 0:
+        await ctx.send("✅ Slowmode desativado.")
+    else:
+        await ctx.send(
+            f"✅ Slowmode definido para `{seconds}s`."
+        )
+
+
+@bot.command()
+@commands.has_permissions(manage_nicknames=True)
+async def nick(ctx, member: discord.Member, *, nickname):
+    try:
+        await member.edit(nick=nickname)
+    except discord.HTTPException:
+        return await ctx.send(
+            "❌ Não consegui alterar o apelido."
+        )
+
+    await ctx.send(
+        f"✅ Apelido de {member.mention} alterado para **{nickname}**."
+    )
+
+
+@bot.command()
+@commands.has_permissions(ban_members=True)
+async def softban(
+    ctx,
+    member: discord.Member,
+    *,
+    reason="Não informado"
+):
+    try:
+        await member.ban(
+            reason=f"Softban: {reason}",
+            delete_message_days=1
+        )
+
+        await ctx.guild.unban(
+            discord.Object(id=member.id),
+            reason="Softban"
+        )
+
+    except discord.HTTPException:
+        return await ctx.send(
+            "❌ Não consegui realizar o softban."
+        )
+
+    await ctx.send(
+        f"✅ {member.mention} recebeu softban.\n"
+        f"**Motivo:** {reason}"
+    )
+
+    await send_log(
+        ctx.guild,
+        "Softban",
+        f"**Usuário:** {member}\n"
+        f"**Moderador:** {ctx.author.mention}\n"
+        f"**Motivo:** {reason}",
+        discord.Color.orange()
+    )
+
+
+@bot.command()
+@commands.has_permissions(manage_roles=True)
+async def temprole(
+    ctx,
+    member: discord.Member,
+    role: discord.Role,
+    duration: str
+):
+    td = parse_duration(duration)
+
+    if not td:
+        return await ctx.send(
+            "❌ Duração inválida. Exemplo: `30m`, `2h`, `1d`."
+        )
+
+    try:
+        await member.add_roles(role)
+    except discord.HTTPException:
+        return await ctx.send(
+            "❌ Não consegui adicionar o cargo."
+        )
+
+    await ctx.send(
+        f"✅ {role.mention} dado para {member.mention} "
+        f"por `{duration}`."
+    )
+
+    await asyncio.sleep(td.total_seconds())
+
+    try:
+        await member.remove_roles(
+            role,
+            reason="Tempo do cargo encerrado"
+        )
+    except discord.HTTPException:
+        pass
+
+
+@bot.command()
+async def botinfo(ctx):
+    embed = discord.Embed(
+        title="🤖 Informações do Bot",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="Nome",
+        value=str(bot.user),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Servidores",
+        value=str(len(bot.guilds)),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Latência",
+        value=f"{round(bot.latency * 1000)}ms",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Prefixo",
+        value=f"`{PREFIX}`",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Python",
+        value="Python",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Discord.py",
+        value=discord.__version__,
+        inline=True
+    )
+
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def renamechannel(ctx, *, name):
+    try:
+        await ctx.channel.edit(name=name)
+    except discord.HTTPException:
+        return await ctx.send(
+            "❌ Não consegui renomear o canal."
+        )
+
+    await ctx.send(
+        f"✅ Canal renomeado para `{name}`."
+    )
+
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def categorycreate(ctx, *, name):
+    try:
+        category = await ctx.guild.create_category(name)
+    except discord.HTTPException:
+        return await ctx.send(
+            "❌ Não consegui criar a categoria."
+        )
+
+    await ctx.send(
+        f"✅ Categoria criada: **{category.name}**."
+    )
+
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def channelinfo(ctx, channel: discord.TextChannel = None):
+    channel = channel or ctx.channel
+
+    embed = discord.Embed(
+        title="📁 Informações do Canal",
+        color=discord.Color.blurple()
+    )
+
+    embed.add_field(
+        name="Nome",
+        value=channel.name,
+        inline=True
+    )
+
+    embed.add_field(
+        name="ID",
+        value=str(channel.id),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Categoria",
+        value=channel.category.name if channel.category else "Nenhuma",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Criado em",
+        value=channel.created_at.strftime("%d/%m/%Y"),
+        inline=True
+    )
+
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+async def roleinfo(ctx, role: discord.Role):
+    embed = discord.Embed(
+        title="🏷️ Informações do Cargo",
+        color=role.color
+    )
+
+    embed.add_field(
+        name="Nome",
+        value=role.name,
+        inline=True
+    )
+
+    embed.add_field(
+        name="ID",
+        value=str(role.id),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Membros",
+        value=str(len(role.members)),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Posição",
+        value=str(role.position),
+        inline=True
+    )
+
+    embed.add_field(
+        name="Menção",
+        value=role.mention,
+        inline=True
+    )
+
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+@commands.has_permissions(manage_nicknames=True)
+async def resetnick(ctx, member: discord.Member):
+    try:
+        await member.edit(nick=None)
+    except discord.HTTPException:
+        return await ctx.send(
+            "❌ Não consegui resetar o apelido."
+        )
+
+    await ctx.send(
+        f"✅ Apelido de {member.mention} resetado."
+        )
 bot.run(TOKEN)
