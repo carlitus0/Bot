@@ -8,16 +8,18 @@ import discord
 from discord.ext import commands
 from discord.ui import View, Button
 
+
 # =========================================================
 # CONFIGURAÇÃO
 # =========================================================
 
 TOKEN = os.getenv("TOKEN")
 PREFIX = "!"
-
 DB = "bot.db"
 
-intents = discord.Intents.all()
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(
     command_prefix=PREFIX,
@@ -25,11 +27,10 @@ bot = commands.Bot(
     help_command=None
 )
 
-start_time = time.time()
+START_TIME = time.time()
 
-# Cache apenas para coisas temporárias.
-# Dados importantes ficam no SQLite.
 spam_cache = {}
+flood_cache = {}
 repeat_cache = {}
 
 
@@ -183,36 +184,62 @@ def now():
 
 
 def is_staff(member):
-    return (
-        member.guild_permissions.administrator
-        or member.guild_permissions.manage_guild
-        or member.guild_permissions.manage_messages
-        or member.guild_permissions.moderate_members
-        or member.guild_permissions.ban_members
-        or member.guild_permissions.kick_members
-    )
+    permissions = member.guild_permissions
+
+    return any([
+        permissions.administrator,
+        permissions.manage_guild,
+        permissions.manage_messages,
+        permissions.moderate_members,
+        permissions.ban_members,
+        permissions.kick_members
+    ])
 
 
 def is_whitelisted(message):
-    guild_id = message.guild.id
-    user_id = message.author.id
-    role_ids = [role.id for role in message.author.roles]
-    channel_id = message.channel.id
+    if not message.guild:
+        return False
+
+    role_ids = [
+        role.id
+        for role in message.author.roles
+    ]
 
     conn = db()
     cur = conn.cursor()
 
-    cur.execute("""
-        SELECT 1 FROM whitelist
-        WHERE guild_id = ?
-        AND (
-            user_id = ?
-            OR role_id IN ({})
-            OR channel_id = ?
+    clauses = [
+        "user_id = ?",
+        "channel_id = ?"
+    ]
+
+    params = [
+        message.author.id,
+        message.channel.id
+    ]
+
+    if role_ids:
+        placeholders = ",".join(
+            "?" for _ in role_ids
         )
+
+        clauses.append(
+            f"role_id IN ({placeholders})"
+        )
+
+        params.extend(role_ids)
+
+    query = f"""
+        SELECT 1
+        FROM whitelist
+        WHERE guild_id = ?
+        AND ({' OR '.join(clauses)})
         LIMIT 1
-    """.format(",".join("?" * len(role_ids)) if role_ids else "NULL"),
-        (guild_id, user_id, *role_ids, channel_id)
+    """
+
+    cur.execute(
+        query,
+        [message.guild.id, *params]
     )
 
     result = cur.fetchone()
@@ -222,15 +249,24 @@ def is_whitelisted(message):
     return result is not None
 
 
-async def send_log(guild, title, description, color=discord.Color.blurple()):
-    ensure_guild(guild.id)
-
+async def send_log(
+    guild,
+    title,
+    description,
+    color=discord.Color.blurple()
+):
     config = get_config(guild.id)
 
-    if not config or not config[1]:
+    channel_id = (
+        config[1]
+        if config
+        else None
+    )
+
+    if not channel_id:
         return
 
-    channel = guild.get_channel(config[1])
+    channel = guild.get_channel(channel_id)
 
     if not channel:
         return
@@ -244,7 +280,11 @@ async def send_log(guild, title, description, color=discord.Color.blurple()):
 
     try:
         await channel.send(embed=embed)
-    except discord.Forbidden:
+
+    except (
+        discord.Forbidden,
+        discord.HTTPException
+    ):
         pass
 
 
@@ -256,10 +296,10 @@ async def punishment_dm(
     duration=None
 ):
     embed = discord.Embed(
-        title=f"🔔 Você recebeu uma punição",
+        title="🔔 Você recebeu uma punição",
         description=(
-            f"Uma ação de moderação foi aplicada à sua conta "
-            f"no servidor **{member.guild.name}**."
+            "Uma ação de moderação foi aplicada "
+            f"à sua conta no servidor **{member.guild.name}**."
         ),
         color=discord.Color.orange(),
         timestamp=datetime.now()
@@ -308,7 +348,11 @@ async def punishment_dm(
 
     try:
         await member.send(embed=embed)
-    except discord.Forbidden:
+
+    except (
+        discord.Forbidden,
+        discord.HTTPException
+    ):
         pass
 
 
@@ -349,11 +393,407 @@ def save_punishment(
 
 
 # =========================================================
-# INICIALIZAÇÃO
+# AUTOMOD
+# =========================================================
+
+async def apply_auto_action(
+    message,
+    reason
+):
+    config = get_config(
+        message.guild.id
+    )
+
+    action = (
+        config[13]
+        if config
+        else "delete"
+    )
+
+    action = action or "delete"
+
+    try:
+        await message.delete()
+
+    except (
+        discord.Forbidden,
+        discord.HTTPException
+    ):
+        pass
+
+    # -----------------------------------------------------
+    # DELETE
+    # -----------------------------------------------------
+
+    if action == "delete":
+
+        save_punishment(
+            message.guild.id,
+            message.author.id,
+            bot.user.id,
+            "AutoMod Delete",
+            reason
+        )
+
+    # -----------------------------------------------------
+    # WARN
+    # -----------------------------------------------------
+
+    elif action == "warn":
+
+        conn = db()
+        cur = conn.cursor()
+
+        cur.execute("""
+            INSERT INTO warns (
+                guild_id,
+                user_id,
+                moderator_id,
+                reason,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            message.guild.id,
+            message.author.id,
+            bot.user.id,
+            f"AutoMod: {reason}",
+            now()
+        ))
+
+        cur.execute("""
+            SELECT COUNT(*)
+            FROM warns
+            WHERE guild_id = ?
+            AND user_id = ?
+        """, (
+            message.guild.id,
+            message.author.id
+        ))
+
+        total = cur.fetchone()[0]
+
+        conn.commit()
+        conn.close()
+
+        await punishment_dm(
+            message.author,
+            "Advertência automática",
+            reason,
+            bot.user
+        )
+
+        save_punishment(
+            message.guild.id,
+            message.author.id,
+            bot.user.id,
+            "AutoMod Warn",
+            reason
+        )
+
+        if total >= 4:
+
+            try:
+                await message.guild.ban(
+                    message.author,
+                    reason="AutoMod: 4 advertências."
+                )
+
+                await punishment_dm(
+                    message.author,
+                    "Banimento automático",
+                    "Você atingiu 4 advertências.",
+                    bot.user
+                )
+
+                save_punishment(
+                    message.guild.id,
+                    message.author.id,
+                    bot.user.id,
+                    "AutoMod Ban",
+                    "4 advertências acumuladas."
+                )
+
+            except (
+                discord.Forbidden,
+                discord.HTTPException
+            ):
+                pass
+
+    # -----------------------------------------------------
+    # MUTE
+    # -----------------------------------------------------
+
+    elif action == "mute":
+
+        try:
+            duration = 10
+
+            await message.author.timeout(
+                timedelta(
+                    minutes=duration
+                ),
+                reason=f"AutoMod: {reason}"
+            )
+
+            await punishment_dm(
+                message.author,
+                "Timeout automático",
+                reason,
+                bot.user,
+                f"{duration} minutos"
+            )
+
+            save_punishment(
+                message.guild.id,
+                message.author.id,
+                bot.user.id,
+                "AutoMod Timeout",
+                reason,
+                f"{duration} minutos"
+            )
+
+        except (
+            discord.Forbidden,
+            discord.HTTPException
+        ):
+            pass
+
+    await send_log(
+        message.guild,
+        "🤖 AutoMod acionado",
+        (
+            f"**Usuário:** {message.author.mention}\n"
+            f"**Canal:** {message.channel.mention}\n"
+            f"**Regra:** {reason}\n"
+            f"**Ação:** {action}"
+        ),
+        discord.Color.red()
+    )
+
+    return True
+
+
+async def automod_check(message):
+
+    if not message.guild:
+        return False
+
+    config = get_config(
+        message.guild.id
+    )
+
+    if not config:
+        return False
+
+    if not config[5]:
+        return False
+
+    content = message.content or ""
+
+    reason = None
+
+    # -----------------------------------------------------
+    # LINK
+    # -----------------------------------------------------
+
+    if config[6]:
+
+        if re.search(
+            r"(https?://|www\.)\S+",
+            content,
+            re.I
+        ):
+            reason = "Link não permitido."
+
+    # -----------------------------------------------------
+    # INVITE
+    # -----------------------------------------------------
+
+    elif config[7]:
+
+        if re.search(
+            r"(discord\.gg/|discord(?:app)?\.com/invite/)",
+            content,
+            re.I
+        ):
+            reason = (
+                "Convite de Discord não permitido."
+            )
+
+    # -----------------------------------------------------
+    # SPAM
+    # -----------------------------------------------------
+
+    if config[8] and reason is None:
+
+        key = (
+            message.guild.id,
+            message.author.id
+        )
+
+        current = time.time()
+
+        spam_cache.setdefault(
+            key,
+            []
+        )
+
+        spam_cache[key] = [
+            t
+            for t in spam_cache[key]
+            if current - t < 6
+        ]
+
+        spam_cache[key].append(
+            current
+        )
+
+        if len(spam_cache[key]) >= 6:
+
+            spam_cache[key].clear()
+
+            reason = "Spam detectado."
+
+    # -----------------------------------------------------
+    # FLOOD
+    # -----------------------------------------------------
+
+    if config[9] and reason is None:
+
+        key = (
+            message.guild.id,
+            message.author.id
+        )
+
+        current = time.time()
+
+        last = flood_cache.get(
+            key,
+            0
+        )
+
+        flood_cache[key] = current
+
+        if current - last < 0.7:
+            reason = "Flood detectado."
+
+    # -----------------------------------------------------
+    # MENÇÕES
+    # -----------------------------------------------------
+
+    if config[10] and reason is None:
+
+        total_mentions = (
+            len(message.mentions)
+            + len(message.role_mentions)
+        )
+
+        if total_mentions >= 5:
+            reason = "Excesso de menções."
+
+    # -----------------------------------------------------
+    # CAPS
+    # -----------------------------------------------------
+
+    if config[11] and reason is None:
+
+        letters = [
+            c
+            for c in content
+            if c.isalpha()
+        ]
+
+        if len(letters) >= 10:
+
+            upper = sum(
+                c.isupper()
+                for c in letters
+            )
+
+            percentage = (
+                upper / len(letters)
+            )
+
+            if percentage >= 0.75:
+                reason = (
+                    "Excesso de letras maiúsculas."
+                )
+
+    # -----------------------------------------------------
+    # REPETIÇÃO
+    # -----------------------------------------------------
+
+    if config[12] and reason is None:
+
+        key = (
+            message.guild.id,
+            message.author.id
+        )
+
+        normalized = (
+            content.lower().strip()
+        )
+
+        if (
+            repeat_cache.get(key)
+            == normalized
+            and normalized
+        ):
+            reason = "Mensagem repetida."
+
+        repeat_cache[key] = normalized
+
+    # -----------------------------------------------------
+    # PALAVRAS PROIBIDAS
+    # -----------------------------------------------------
+
+    if reason is None:
+
+        conn = db()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT word
+            FROM badwords
+            WHERE guild_id = ?
+            """,
+            (message.guild.id,)
+        )
+
+        words = cur.fetchall()
+
+        conn.close()
+
+        lower = content.lower()
+
+        for (word,) in words:
+
+            if word.lower() in lower:
+
+                reason = (
+                    f"Palavra bloqueada: `{word}`"
+                )
+
+                break
+
+    if reason is None:
+        return False
+
+    return await apply_auto_action(
+        message,
+        reason
+    )
+
+
+# =========================================================
+# EVENTOS
 # =========================================================
 
 @bot.event
 async def on_ready():
+
     init_db()
 
     print("=" * 45)
@@ -369,13 +809,10 @@ async def on_ready():
                 name=f"{PREFIX}help"
             )
         )
-    except:
+
+    except discord.HTTPException:
         pass
 
-
-# =========================================================
-# MENÇÃO DO BOT
-# =========================================================
 
 @bot.event
 async def on_message(message):
@@ -384,335 +821,154 @@ async def on_message(message):
         return
 
     if bot.user and bot.user in message.mentions:
-        await message.channel.send("que")
+
+        try:
+            await message.channel.send("que")
+
+        except discord.HTTPException:
+            pass
 
     if message.guild:
 
-        if not is_staff(message.author) and not is_whitelisted(message):
-            result = await automod_check(message)
+        if (
+            not is_staff(message.author)
+            and not is_whitelisted(message)
+        ):
 
-            if result:
-                await bot.process_commands(message)
+            if await automod_check(message):
                 return
 
     await bot.process_commands(message)
 
 
-# =========================================================
-# AUTOMOD
-# =========================================================
+@bot.event
+async def on_member_join(member):
 
-async def automod_check(message):
-
-    guild = message.guild
-    content = message.content
-    config = get_config(guild.id)
-
-    if not config:
-        return False
-
-    # Índices da tabela config
-    automod = config[5]
-
-    if not automod:
-        return False
-
-    reason = None
-
-    # -----------------------------------------------------
-    # ANTI LINK
-    # -----------------------------------------------------
-
-    if config[6]:
-
-        link_pattern = r"(https?://|www\.)\S+"
-
-        if re.search(link_pattern, content.lower()):
-            reason = "Link não permitido."
-
-    # -----------------------------------------------------
-    # ANTI INVITE
-    # -----------------------------------------------------
-
-    if config[7] and reason is None:
-
-        invite_pattern = r"(discord\.gg/|discord\.com/invite/)"
-
-        if re.search(invite_pattern, content.lower()):
-            reason = "Convite de Discord não permitido."
-
-    # -----------------------------------------------------
-    # ANTI SPAM
-    # -----------------------------------------------------
-
-    if config[8] and reason is None:
-
-        user_id = message.author.id
-        current = time.time()
-
-        if user_id not in spam_cache:
-            spam_cache[user_id] = []
-
-        spam_cache[user_id] = [
-            t for t in spam_cache[user_id]
-            if current - t < 6
-        ]
-
-        spam_cache[user_id].append(current)
-
-        if len(spam_cache[user_id]) >= 6:
-            spam_cache[user_id] = []
-            reason = "Spam detectado."
-
-    # -----------------------------------------------------
-    # ANTI FLOOD
-    # -----------------------------------------------------
-
-    if config[9] and reason is None:
-
-        user_id = message.author.id
-        current = time.time()
-
-        key = f"{guild.id}:{user_id}"
-
-        if key in repeat_cache:
-
-            last_time = repeat_cache[key]
-
-            if current - last_time < 0.7:
-                reason = "Flood detectado."
-
-        repeat_cache[key] = current
-
-    # -----------------------------------------------------
-    # ANTI MENTION
-    # -----------------------------------------------------
-
-    if config[10] and reason is None:
-
-        total_mentions = (
-            len(message.mentions)
-            + len(message.role_mentions)
-        )
-
-        if total_mentions >= 5:
-            reason = "Excesso de menções."
-
-    # -----------------------------------------------------
-    # ANTI CAPS
-    # -----------------------------------------------------
-
-    if config[11] and reason is None:
-
-        letters = [
-            c for c in content
-            if c.isalpha()
-        ]
-
-        if len(letters) >= 10:
-
-            upper = sum(
-                1 for c in letters
-                if c.isupper()
-            )
-
-            percentage = upper / len(letters)
-
-            if percentage >= 0.75:
-                reason = "Excesso de letras maiúsculas."
-
-    # -----------------------------------------------------
-    # MENSAGEM REPETIDA
-    # -----------------------------------------------------
-
-    if config[12] and reason is None:
-
-        key = f"{guild.id}:{message.author.id}"
-
-        if key in repeat_cache:
-
-            if repeat_cache[key] == content.lower():
-                reason = "Mensagem repetida."
-
-        repeat_cache[key] = content.lower()
-
-    # -----------------------------------------------------
-    # PALAVRAS PROIBIDAS
-    # -----------------------------------------------------
-
-    if reason is None:
-
-        conn = db()
-        cur = conn.cursor()
-
-        cur.execute(
-            "SELECT word FROM badwords WHERE guild_id = ?",
-            (guild.id,)
-        )
-
-        words = cur.fetchall()
-
-        conn.close()
-
-        for (word,) in words:
-
-            if word.lower() in content.lower():
-                reason = f"Palavra bloqueada: `{word}`"
-                break
-
-    if reason is None:
-        return False
-
-    # -----------------------------------------------------
-    # AÇÃO
-    # -----------------------------------------------------
-
-    action = config[13] or "delete"
-
-    try:
-        await message.delete()
-    except discord.Forbidden:
-        pass
-
-    save_punishment(
-        guild.id,
-        message.author.id,
-        bot.user.id,
-        f"AutoMod: {action}",
-        reason
+    config = get_config(
+        member.guild.id
     )
 
-    await send_log(
-        guild,
-        "🤖 AutoMod acionado",
-        (
-            f"**Usuário:** {message.author.mention}\n"
-            f"**Canal:** {message.channel.mention}\n"
-            f"**Regra:** {reason}\n"
-            f"**Ação:** {action}"
-        ),
-        discord.Color.red()
-    )
+    channel = None
 
-    # -----------------------------------------------------
-    # WARN
-    # -----------------------------------------------------
+    if config and config[2]:
+        channel = member.guild.get_channel(
+            config[2]
+        )
 
-    if action == "warn":
+    if channel:
 
-        conn = db()
-        cur = conn.cursor()
+        embed = discord.Embed(
+            title="👋 Novo membro",
+            description=(
+                f"Bem-vindo(a), {member.mention}!"
+            ),
+            color=discord.Color.green()
+        )
 
-        cur.execute("""
-            INSERT INTO warns (
-                guild_id,
-                user_id,
-                moderator_id,
-                reason,
-                created_at
-            )
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            guild.id,
-            message.author.id,
-            bot.user.id,
-            f"AutoMod: {reason}",
-            now()
-        ))
-
-        conn.commit()
-
-        cur.execute("""
-            SELECT COUNT(*)
-            FROM warns
-            WHERE guild_id = ?
-            AND user_id = ?
-        """, (
-            guild.id,
-            message.author.id
-        ))
-
-        total = cur.fetchone()[0]
-
-        conn.close()
-
-        await punishment_dm(
-            message.author,
-            "Advertência automática",
-            reason,
-            bot.user
+        embed.set_thumbnail(
+            url=member.display_avatar.url
         )
 
         try:
-            await message.channel.send(
-                f"⚠️ {message.author.mention}, sua mensagem foi removida. "
-                f"**Motivo:** {reason}",
-                delete_after=5
+            await channel.send(
+                embed=embed
             )
-        except:
+
+        except discord.HTTPException:
             pass
 
-        if total >= 4:
+    if config and config[4]:
+
+        role = member.guild.get_role(
+            config[4]
+        )
+
+        if role:
 
             try:
-                await message.author.ban(
-                    reason="AutoMod: 4 advertências."
-                )
-
-                save_punishment(
-                    guild.id,
-                    message.author.id,
-                    bot.user.id,
-                    "Ban",
-                    "Acúmulo de 4 advertências."
-                )
-
-                await punishment_dm(
-                    message.author,
-                    "Banimento automático",
-                    "Você atingiu 4 advertências.",
-                    bot.user
+                await member.add_roles(
+                    role,
+                    reason="Autorole"
                 )
 
             except discord.Forbidden:
                 pass
 
-    # -----------------------------------------------------
-    # MUTE
-    # -----------------------------------------------------
 
-    elif action == "mute":
+@bot.event
+async def on_member_remove(member):
+
+    config = get_config(
+        member.guild.id
+    )
+
+    channel = None
+
+    if config and config[3]:
+        channel = member.guild.get_channel(
+            config[3]
+        )
+
+    if channel:
 
         try:
-
-            duration = 10
-
-            await message.author.timeout(
-                timedelta(minutes=duration),
-                reason=f"AutoMod: {reason}"
+            await channel.send(
+                f"👋 **{member}** saiu do servidor."
             )
 
-            await punishment_dm(
-                message.author,
-                "Timeout automático",
-                reason,
-                bot.user,
-                f"{duration} minutos"
-            )
-
-            save_punishment(
-                guild.id,
-                message.author.id,
-                bot.user.id,
-                "AutoMod Timeout",
-                reason,
-                f"{duration} minutos"
-            )
-
-        except discord.Forbidden:
+        except discord.HTTPException:
             pass
 
-    return True
+
+@bot.event
+async def on_message_delete(message):
+
+    if not message.guild:
+        return
+
+    if message.author.bot:
+        return
+
+    text = message.content or "[sem texto]"
+
+    await send_log(
+        message.guild,
+        "🗑️ Mensagem apagada",
+        (
+            f"**Autor:** {message.author.mention}\n"
+            f"**Canal:** {message.channel.mention}\n"
+            f"**Conteúdo:** {text[:1500]}"
+        ),
+        discord.Color.red()
+    )
+
+
+@bot.event
+async def on_message_edit(
+    before,
+    after
+):
+
+    if not before.guild:
+        return
+
+    if before.author.bot:
+        return
+
+    if before.content == after.content:
+        return
+
+    await send_log(
+        before.guild,
+        "✏️ Mensagem editada",
+        (
+            f"**Autor:** {before.author.mention}\n"
+            f"**Canal:** {before.channel.mention}\n"
+            f"**Antes:** {before.content[:700]}\n"
+            f"**Depois:** {after.content[:700]}"
+        ),
+        discord.Color.orange()
+    )
 
 
 # =========================================================
@@ -722,7 +978,9 @@ async def automod_check(message):
 @bot.command()
 async def ping(ctx):
 
-    latency = round(bot.latency * 1000)
+    latency = round(
+        bot.latency * 1000
+    )
 
     embed = discord.Embed(
         title="🏓 Pong!",
@@ -730,177 +988,9 @@ async def ping(ctx):
         color=discord.Color.green()
     )
 
-    await ctx.send(embed=embed)
-
-
-# =========================================================
-# WARN
-# =========================================================
-
-@bot.command()
-@commands.has_permissions(manage_messages=True)
-async def warn(
-    ctx,
-    member: discord.Member,
-    *,
-    motivo="Nenhum motivo informado"
-):
-
-    if member == ctx.author:
-        return await ctx.send(
-            "❌ Você não pode advertir a si mesmo."
-        )
-
-    if member == ctx.guild.owner:
-        return await ctx.send(
-            "❌ Você não pode advertir o dono do servidor."
-        )
-
-    if member.top_role >= ctx.author.top_role:
-        return await ctx.send(
-            "❌ O cargo do usuário é igual ou superior ao seu."
-        )
-
-    conn = db()
-    cur = conn.cursor()
-
-    cur.execute("""
-        INSERT INTO warns (
-            guild_id,
-            user_id,
-            moderator_id,
-            reason,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        ctx.guild.id,
-        member.id,
-        ctx.author.id,
-        motivo,
-        now()
-    ))
-
-    conn.commit()
-
-    cur.execute("""
-        SELECT COUNT(*)
-        FROM warns
-        WHERE guild_id = ?
-        AND user_id = ?
-    """, (
-        ctx.guild.id,
-        member.id
-    ))
-
-    total = cur.fetchone()[0]
-
-    conn.close()
-
-    await punishment_dm(
-        member,
-        "Advertência",
-        motivo,
-        ctx.author
+    await ctx.send(
+        embed=embed
     )
 
-    save_punishment(
-        ctx.guild.id,
-        member.id,
-        ctx.author.id,
-        "Warn",
-        motivo
-    )
 
-    embed = discord.Embed(
-        title="⚠️ Advertência aplicada",
-        color=discord.Color.orange(),
-        timestamp=datetime.now()
-    )
-
-    embed.add_field(
-        name="👤 Usuário",
-        value=f"{member.mention}\n`{member.id}`",
-        inline=True
-    )
-
-    embed.add_field(
-        name="⚠️ Total",
-        value=f"`{total}/4`",
-        inline=True
-    )
-
-    embed.add_field(
-        name="👮 Moderador",
-        value=ctx.author.mention,
-        inline=True
-    )
-
-    embed.add_field(
-        name="📝 Motivo",
-        value=motivo,
-        inline=False
-    )
-
-    await ctx.send(embed=embed)
-
-    await send_log(
-        ctx.guild,
-        "⚠️ Warn aplicado",
-        (
-            f"**Usuário:** {member.mention}\n"
-            f"**Moderador:** {ctx.author.mention}\n"
-            f"**Motivo:** {motivo}\n"
-            f"**Total:** {total}/4"
-        ),
-        discord.Color.orange()
-    )
-
-    if total >= 4:
-
-        try:
-            await member.ban(
-                reason="4 advertências acumuladas."
-            )
-
-            await punishment_dm(
-                member,
-                "Banimento automático",
-                "Você atingiu 4 advertências.",
-                ctx.author
-            )
-
-            save_punishment(
-                ctx.guild.id,
-                member.id,
-                ctx.author.id,
-                "Ban",
-                "4 advertências acumuladas."
-            )
-
-            await ctx.send(
-                f"🔨 {member.mention} foi banido automaticamente "
-                f"por atingir 4 advertências."
-            )
-
-        except discord.Forbidden:
-            await ctx.send(
-                "❌ Não consegui aplicar o banimento automático."
-            )
-
-
-# =========================================================
-# WARNS
-# =========================================================
-
-@bot.command()
-@commands.has_permissions(manage_messages=True)
-async def warns(ctx, member: discord.Member):
-
-    conn = db()
-    cur = conn.cursor()
-
-    cur.execute("""
-        SELECT moderator_id, reason, created_at
-        FROM warns
-        WHERE guild_i
+# =============================
