@@ -2976,4 +2976,51 @@ async def panel(ctx):
 # ============================================================
 # FIM — DEIXE bot.run(TOKEN) ABAIXO DESTE BLOCO
 # ============================================================
+# ==============================
+# COMANDO !lockc
+# ==============================
+
+LOCKC_ROLE_ID = 1556179203034972202
+
+@bot.command()
+@commands.has_permissions(manage_channels=True)
+async def lockc(ctx):
+    channel = ctx.channel
+    guild = ctx.guild
+
+    everyone = guild.default_role
+    role = guild.get_role(LOCKC_ROLE_ID)
+
+    if role is None:
+        return await ctx.send("❌ Cargo não encontrado.")
+
+    # Bloqueia @everyone
+    await channel.set_permissions(
+        everyone,
+        send_messages=False,
+        create_public_threads=False,
+        create_private_threads=False,
+        send_messages_in_threads=False
+    )
+
+    # Libera o cargo
+    await channel.set_permissions(
+        role,
+        send_messages=True,
+        create_public_threads=True,
+        create_private_threads=True,
+        send_messages_in_threads=True
+    )
+
+    await ctx.send(
+        f"🔒 Canal bloqueado!\n"
+        f"✏️ Apenas <@&{LOCKC_ROLE_ID}> pode enviar mensagens e criar tópicos."
+    )
+
+
+@lockc.error
+async def lockc_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ Você precisa da permissão **Gerenciar Canais** para usar esse comando.")
+        
 bot.run(TOKEN)
