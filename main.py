@@ -3022,5 +3022,36 @@ async def lockc(ctx):
 async def lockc_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ Você precisa da permissão **Gerenciar Canais** para usar esse comando.")
+        # ═══════════════════════════════════════
+# PING - INTERESSADO EM MERCADO
+# ═══════════════════════════════════════
+
+CARGO_INTERESSADO_MERCADO = 1557188345455706182
+
+CANAIS_MERCADO = {
+    1556449656173629512,
+    1556466868074577950
+}
+
+
+@bot.listen("on_thread_create")
+async def ping_interessados_mercado(thread):
+    if thread.parent_id not in CANAIS_MERCADO:
+        return
+
+    cargo = thread.guild.get_role(CARGO_INTERESSADO_MERCADO)
+
+    if cargo is None:
+        return
+
+    try:
+        await thread.send(
+            f"{cargo.mention} 📢 **Nova postagem no mercado!**",
+            allowed_mentions=discord.AllowedMentions(roles=True)
+        )
+    except discord.Forbidden:
+        print("❌ Não tenho permissão para enviar mensagens ou mencionar o cargo.")
+    except Exception as e:
+        print(f"❌ Erro no ping do mercado: {e}")
         
 bot.run(TOKEN)
