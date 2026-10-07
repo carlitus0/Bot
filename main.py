@@ -3023,35 +3023,62 @@ async def lockc_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ Você precisa da permissão **Gerenciar Canais** para usar esse comando.")
         # ═══════════════════════════════════════
-# PING - INTERESSADO EM MERCADO
-# ═══════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# 📢 INTERESSADO EM MERCADO
+# ═══════════════════════════════════════════════════════════════
 
 CARGO_INTERESSADO_MERCADO = 1557188345455706182
 
 CANAIS_MERCADO = {
     1556449656173629512,
-    1556466868074577950
+    1556466868074577950,
 }
 
 
 @bot.listen("on_thread_create")
-async def ping_interessados_mercado(thread):
+async def ping_interessados_mercado(thread: discord.Thread):
+
     if thread.parent_id not in CANAIS_MERCADO:
+        return
+
+    if thread.guild is None:
         return
 
     cargo = thread.guild.get_role(CARGO_INTERESSADO_MERCADO)
 
     if cargo is None:
+        print(
+            f"❌ Cargo {CARGO_INTERESSADO_MERCADO} não encontrado."
+        )
         return
 
     try:
         await thread.send(
-            f"{cargo.mention} 📢 **Nova postagem no mercado!**",
-            allowed_mentions=discord.AllowedMentions(roles=True)
+            f"{cargo.mention} 📢 **Nova postagem no mercado!**\n"
+            f"Uma nova postagem acabou de ser criada.",
+            allowed_mentions=discord.AllowedMentions(
+                roles=True
+            )
         )
+
+        print(
+            f"✅ Ping enviado na postagem: {thread.name}"
+        )
+
     except discord.Forbidden:
-        print("❌ Não tenho permissão para enviar mensagens ou mencionar o cargo.")
+        print(
+            f"❌ Sem permissão para enviar mensagem ou mencionar "
+            f"o cargo no tópico: {thread.name}"
+        )
+
+    except discord.HTTPException as e:
+        print(
+            f"❌ Erro do Discord ao enviar o ping: {e}"
+        )
+
     except Exception as e:
-        print(f"❌ Erro no ping do mercado: {e}")
+        print(
+            f"❌ Erro inesperado no sistema de mercado: {e}"
+        
         
 bot.run(TOKEN)
