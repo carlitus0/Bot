@@ -3072,6 +3072,6 @@ async def ping_interessados_mercado(thread: discord.Thread):
     except Exception as e:
         print(
             f"❌ Erro inesperado no sistema de mercado: {e}"
-        
+        )
         
 bot.run(TOKEN)
