@@ -3082,7 +3082,7 @@ async def ping_interessados_mercado(thread: discord.Thread):
 
 import json
 
-LOCKCH_CARGO_ID = 1556179203034972202
+LOCKCH_CARGO_ID = 1557206290009428069
 
 
 def preparar_backup_perms():
