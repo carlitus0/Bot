@@ -3074,168 +3074,327 @@ async def ping_interessados_mercado(thread: discord.Thread):
             f"❌ Erro inesperado no sistema de mercado: {e}"
         )
 
-import asyncio
-import discord
-from discord.ext import commands
 
-LOCKCH_CARGO_ID = 1557206290009428069
+
+# =========================================================
+# COMANDOS EXTRAS — CENTRAL DE ADMINISTRAÇÃO
+# =========================================================
+
+import json
+
+LOCKCH_CARGO_ID = 1556179203034972202
+
+
+def preparar_backup_perms():
+    with db() as con:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS permission_backups (
+                guild_id INTEGER,
+                channel_id INTEGER,
+                data TEXT,
+                PRIMARY KEY (guild_id, channel_id)
+            )
+        """)
+
+
+async def aplicar_lock(canal, guild):
+    cargo = guild.get_role(LOCKCH_CARGO_ID)
+    if cargo is None:
+        raise ValueError("Cargo configurado não encontrado.")
+
+    await canal.set_permissions(
+        guild.default_role,
+        send_messages=False,
+        create_public_threads=False,
+        create_private_threads=False,
+        send_messages_in_threads=False
+    )
+
+    await canal.set_permissions(
+        cargo,
+        send_messages=True,
+        create_public_threads=True,
+        create_private_threads=True,
+        send_messages_in_threads=True
+    )
+
+
+async def aplicar_unlock(canal, guild):
+    cargo = guild.get_role(LOCKCH_CARGO_ID)
+
+    await canal.set_permissions(
+        guild.default_role,
+        send_messages=None,
+        create_public_threads=None,
+        create_private_threads=None,
+        send_messages_in_threads=None
+    )
+
+    if cargo:
+        await canal.set_permissions(
+            cargo,
+            send_messages=None,
+            create_public_threads=None,
+            create_private_threads=None,
+            send_messages_in_threads=None
+        )
 
 
 @bot.command(name="lockch")
 @commands.has_permissions(manage_channels=True)
-async def lockch(ctx, *, argumento: str = None):
-    guild = ctx.guild
+async def lockch(ctx):
+    try:
+        await aplicar_lock(ctx.channel, ctx.guild)
+        await ctx.send("🔒 Canal bloqueado com sucesso.")
+    except (discord.HTTPException, ValueError) as e:
+        await ctx.send(f"❌ Não consegui bloquear o canal: {e}")
 
-    if guild is None:
-        return
 
-    cargo = guild.get_role(LOCKCH_CARGO_ID)
+@bot.command(name="unlockch")
+@commands.has_permissions(manage_channels=True)
+async def unlockch(ctx):
+    try:
+        await aplicar_unlock(ctx.channel, ctx.guild)
+        await ctx.send("🔓 Permissões de bloqueio removidas do canal.")
+    except discord.HTTPException:
+        await ctx.send("❌ Não consegui desbloquear o canal.")
 
-    if cargo is None:
-        aviso = await ctx.send("❌ Não encontrei o cargo configurado.")
-        await asyncio.sleep(5)
-        await aviso.delete()
-        return
 
-    # Lista canais de texto
-    if argumento and argumento.lower() == "listar":
-        canais = guild.text_channels
-        texto = "\n".join(f"`{c.id}` — {c.name}" for c in canais)
+@bot.command(name="lockcat")
+@commands.has_permissions(manage_channels=True)
+async def lockcat(ctx, categoria: discord.CategoryChannel = None):
+    categoria = categoria or getattr(ctx.channel, "category", None)
 
-        if not texto:
-            texto = "Nenhum canal de texto encontrado."
+    if categoria is None:
+        return await ctx.send(
+            "❌ Informe uma categoria ou use o comando dentro de uma."
+        )
 
-        aviso = await ctx.send(f"**Canais disponíveis:**\n{texto[:1800]}")
-        await asyncio.sleep(15)
-        await aviso.delete()
-        return
+    sucesso = 0
+    erros = 0
 
-    # Canal atual ou canal informado por ID/menção
-    destino = ctx.channel
+    for canal in categoria.channels:
+        try:
+            await aplicar_lock(canal, ctx.guild)
+            sucesso += 1
+        except (discord.HTTPException, ValueError):
+            erros += 1
 
-    if argumento:
-        canal_id = argumento.replace("<#", "").replace(">", "").strip()
+    await ctx.send(
+        f"🔒 **Categoria:** {categoria.name}\n"
+        f"✅ Canais bloqueados: {sucesso}\n"
+        f"❌ Falhas: {erros}"
+    )
 
-        if not canal_id.isdigit():
-            aviso = await ctx.send(
-                "❌ Use `!lockch`, `!lockch listar` ou `!lockch ID_DO_CANAL`."
-            )
-            await asyncio.sleep(5)
-            await aviso.delete()
-            return
 
-        encontrado = guild.get_channel(int(canal_id))
+@bot.command(name="unlockcat")
+@commands.has_permissions(manage_channels=True)
+async def unlockcat(ctx, categoria: discord.CategoryChannel = None):
+    categoria = categoria or getattr(ctx.channel, "category", None)
 
-        if not isinstance(encontrado, discord.TextChannel):
-            aviso = await ctx.send("❌ Canal de texto não encontrado.")
-            await asyncio.sleep(5)
-            await aviso.delete()
-            return
+    if categoria is None:
+        return await ctx.send(
+            "❌ Informe uma categoria ou use o comando dentro de uma."
+        )
 
-        destino = encontrado
+    sucesso = 0
+    erros = 0
+
+    for canal in categoria.channels:
+        try:
+            await aplicar_unlock(canal, ctx.guild)
+            sucesso += 1
+        except discord.HTTPException:
+            erros += 1
+
+    await ctx.send(
+        f"🔓 **Categoria:** {categoria.name}\n"
+        f"✅ Canais desbloqueados: {sucesso}\n"
+        f"❌ Falhas: {erros}"
+    )
+
+
+@bot.command(name="nick")
+@commands.has_permissions(manage_nicknames=True)
+async def nick(ctx, membro: discord.Member, *, apelido: str):
+    try:
+        await membro.edit(
+            nick=apelido,
+            reason=f"Alterado por {ctx.author}"
+        )
+        await ctx.send(
+            f"✅ Apelido de {membro.mention} alterado para **{apelido}**."
+        )
+    except discord.Forbidden:
+        await ctx.send("❌ Não tenho hierarquia para alterar esse apelido.")
+    except discord.HTTPException:
+        await ctx.send("❌ Não consegui alterar o apelido.")
+
+
+@bot.command(name="backupperms")
+@commands.has_permissions(manage_channels=True)
+async def backupperms(ctx):
+    preparar_backup_perms()
+    dados = []
+
+    for alvo, overwrite in ctx.channel.overwrites.items():
+        tipo = "role" if isinstance(alvo, discord.Role) else "member"
+        permissoes = overwrite.pair()
+
+        dados.append({
+            "tipo": tipo,
+            "id": alvo.id,
+            "allow": permissoes[0].value,
+            "deny": permissoes[1].value
+        })
+
+    with db() as con:
+        con.execute("""
+            INSERT OR REPLACE INTO permission_backups
+            (guild_id, channel_id, data)
+            VALUES (?, ?, ?)
+        """, (
+            ctx.guild.id,
+            ctx.channel.id,
+            json.dumps(dados)
+        ))
+
+    await ctx.send(
+        f"✅ Permissões de {ctx.channel.mention} salvas no banco de dados."
+    )
+
+
+@bot.command(name="restoreperms")
+@commands.has_permissions(manage_channels=True)
+async def restoreperms(ctx):
+    preparar_backup_perms()
+
+    with db() as con:
+        registro = con.execute("""
+            SELECT data FROM permission_backups
+            WHERE guild_id = ? AND channel_id = ?
+        """, (ctx.guild.id, ctx.channel.id)).fetchone()
+
+    if not registro:
+        return await ctx.send(
+            "❌ Não existe backup para este canal."
+        )
+
+    dados = json.loads(registro[0])
+    alvos_salvos = set()
 
     try:
-        # Bloqueia @everyone
-        everyone_perms = destino.overwrites_for(guild.default_role)
-        everyone_perms.send_messages = False
-        everyone_perms.create_public_threads = False
-        everyone_perms.create_private_threads = False
-        everyone_perms.send_messages_in_threads = False
+        for item in dados:
+            if item["tipo"] == "role":
+                alvo = ctx.guild.get_role(item["id"])
+            else:
+                alvo = ctx.guild.get_member(item["id"])
 
-        await destino.set_permissions(
-            guild.default_role,
-            overwrite=everyone_perms,
-            reason=f"Lockch executado por {ctx.author}"
-        )
-
-        # Bloqueia os outros cargos que tenham permissões explícitas
-        for role in guild.roles:
-            if role.is_default() or role.id == cargo.id:
+            if alvo is None:
                 continue
 
-            overwrite = destino.overwrites_for(role)
+            alvos_salvos.add((item["tipo"], item["id"]))
 
-            if any(value is True for value in (
-                overwrite.send_messages,
-                overwrite.create_public_threads,
-                overwrite.create_private_threads,
-                overwrite.send_messages_in_threads
-            )):
-                overwrite.send_messages = False
-                overwrite.create_public_threads = False
-                overwrite.create_private_threads = False
-                overwrite.send_messages_in_threads = False
+            overwrite = discord.PermissionOverwrite.from_pair(
+                discord.Permissions(item["allow"]),
+                discord.Permissions(item["deny"])
+            )
 
-                await destino.set_permissions(
-                    role,
-                    overwrite=overwrite,
-                    reason=f"Lockch executado por {ctx.author}"
-                )
+            await ctx.channel.set_permissions(
+                alvo,
+                overwrite=overwrite
+            )
 
-        # Bloqueia membros com permissões individuais explícitas
-        for target, overwrite in list(destino.overwrites.items()):
-            if not isinstance(target, discord.Member):
-                continue
+        # Remove overrides criados depois do backup.
+        for alvo in list(ctx.channel.overwrites):
+            tipo = "role" if isinstance(alvo, discord.Role) else "member"
 
-            if any(value is True for value in (
-                overwrite.send_messages,
-                overwrite.create_public_threads,
-                overwrite.create_private_threads,
-                overwrite.send_messages_in_threads
-            )):
-                overwrite.send_messages = False
-                overwrite.create_public_threads = False
-                overwrite.create_private_threads = False
-                overwrite.send_messages_in_threads = False
+            if (tipo, alvo.id) not in alvos_salvos:
+                await ctx.channel.set_permissions(alvo, overwrite=None)
 
-                await destino.set_permissions(
-                    target,
-                    overwrite=overwrite,
-                    reason=f"Lockch executado por {ctx.author}"
-                )
-
-        # Libera o cargo autorizado
-        cargo_perms = destino.overwrites_for(cargo)
-        cargo_perms.send_messages = True
-        cargo_perms.create_public_threads = True
-        cargo_perms.create_private_threads = True
-        cargo_perms.send_messages_in_threads = True
-
-        await destino.set_permissions(
-            cargo,
-            overwrite=cargo_perms,
-            reason=f"Lockch executado por {ctx.author}"
-        )
-
-        aviso = await ctx.send(
-            f"🔒 {destino.mention} foi trancado!\n"
-            f"Somente o cargo {cargo.mention} recebeu permissão "
-            "para falar e criar tópicos."
-        )
-
-        await asyncio.sleep(8)
-        await aviso.delete()
-
-    except discord.Forbidden:
-        aviso = await ctx.send(
-            "❌ Não tenho permissões suficientes para trancar esse canal."
-        )
-        await asyncio.sleep(5)
-        await aviso.delete()
+        await ctx.send("✅ Permissões restauradas conforme o backup.")
 
     except discord.HTTPException:
-        aviso = await ctx.send("❌ O Discord retornou um erro ao alterar as permissões.")
-        await asyncio.sleep(5)
-        await aviso.delete()
+        await ctx.send("❌ Erro ao restaurar algumas permissões.")
 
 
-@lockch.error
-async def lockch_error(ctx, error):
-    if isinstance(error, commands.MissingPermissions):
-        aviso = await ctx.send(
-            "❌ Você precisa da permissão **Gerenciar Canais** para usar esse comando."
-        )
-        await asyncio.sleep(5)
-        await aviso.delete()
-        
+@bot.command(name="serverinfo")
+async def serverinfo(ctx):
+    guild = ctx.guild
+
+    embed = discord.Embed(
+        title=f"Informações — {guild.name}",
+        color=discord.Color.blurple()
+    )
+
+    embed.set_thumbnail(url=guild.icon.url if guild.icon else None)
+    embed.add_field(name="ID", value=str(guild.id))
+    embed.add_field(name="Membros", value=str(guild.member_count))
+    embed.add_field(name="Canais", value=str(len(guild.channels)))
+    embed.add_field(name="Cargos", value=str(len(guild.roles)))
+    embed.add_field(
+        name="Criado em",
+        value=discord.utils.format_dt(guild.created_at, style="D"),
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="userinfo")
+async def userinfo(ctx, membro: discord.Member = None):
+    membro = membro or ctx.author
+
+    embed = discord.Embed(
+        title=f"Informações — {membro}",
+        color=membro.color
+    )
+
+    embed.set_thumbnail(url=membro.display_avatar.url)
+    embed.add_field(name="Nome", value=membro.name)
+    embed.add_field(name="Apelido", value=membro.display_name)
+    embed.add_field(name="ID", value=str(membro.id))
+    embed.add_field(
+        name="Conta criada",
+        value=discord.utils.format_dt(membro.created_at, style="D"),
+        inline=False
+    )
+    embed.add_field(
+        name="Entrou no servidor",
+        value=(
+            discord.utils.format_dt(membro.joined_at, style="D")
+            if membro.joined_at else "Desconhecido"
+        ),
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="staffp")
+@commands.has_permissions(manage_guild=True)
+async def staffp(ctx):
+    embed = discord.Embed(
+        title="🧰 Painel da equipe",
+        description=(
+            "`!kick @membro motivo` — Expulsar membro\n"
+            "`!ban @membro motivo` — Banir membro\n"
+            "`!mute @membro 10m motivo` — Silenciar\n"
+            "`!unmute @membro` — Remover silêncio\n"
+            "`!nick @membro novo nome` — Alterar apelido\n"
+            "`!lockch` / `!unlockch` — Bloquear canal\n"
+            "`!lockcat` / `!unlockcat` — Bloquear categoria\n"
+            "`!backupperms` — Salvar permissões\n"
+            "`!restoreperms` — Restaurar permissões\n"
+            "`!serverinfo` — Informações do servidor\n"
+            "`!userinfo @membro` — Informações do membro"
+        ),
+        color=discord.Color.blurple()
+    )
+
+    await ctx.send(embed=embed)
+
+
+# Mantenha esta linha como a última do arquivo:
 bot.run(TOKEN)
+                    
