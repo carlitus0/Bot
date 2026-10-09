@@ -3073,5 +3073,169 @@ async def ping_interessados_mercado(thread: discord.Thread):
         print(
             f"❌ Erro inesperado no sistema de mercado: {e}"
         )
+
+import asyncio
+import discord
+from discord.ext import commands
+
+LOCKCH_CARGO_ID = 1557206290009428069
+
+
+@bot.command(name="lockch")
+@commands.has_permissions(manage_channels=True)
+async def lockch(ctx, *, argumento: str = None):
+    guild = ctx.guild
+
+    if guild is None:
+        return
+
+    cargo = guild.get_role(LOCKCH_CARGO_ID)
+
+    if cargo is None:
+        aviso = await ctx.send("❌ Não encontrei o cargo configurado.")
+        await asyncio.sleep(5)
+        await aviso.delete()
+        return
+
+    # Lista canais de texto
+    if argumento and argumento.lower() == "listar":
+        canais = guild.text_channels
+        texto = "\n".join(f"`{c.id}` — {c.name}" for c in canais)
+
+        if not texto:
+            texto = "Nenhum canal de texto encontrado."
+
+        aviso = await ctx.send(f"**Canais disponíveis:**\n{texto[:1800]}")
+        await asyncio.sleep(15)
+        await aviso.delete()
+        return
+
+    # Canal atual ou canal informado por ID/menção
+    destino = ctx.channel
+
+    if argumento:
+        canal_id = argumento.replace("<#", "").replace(">", "").strip()
+
+        if not canal_id.isdigit():
+            aviso = await ctx.send(
+                "❌ Use `!lockch`, `!lockch listar` ou `!lockch ID_DO_CANAL`."
+            )
+            await asyncio.sleep(5)
+            await aviso.delete()
+            return
+
+        encontrado = guild.get_channel(int(canal_id))
+
+        if not isinstance(encontrado, discord.TextChannel):
+            aviso = await ctx.send("❌ Canal de texto não encontrado.")
+            await asyncio.sleep(5)
+            await aviso.delete()
+            return
+
+        destino = encontrado
+
+    try:
+        # Bloqueia @everyone
+        everyone_perms = destino.overwrites_for(guild.default_role)
+        everyone_perms.send_messages = False
+        everyone_perms.create_public_threads = False
+        everyone_perms.create_private_threads = False
+        everyone_perms.send_messages_in_threads = False
+
+        await destino.set_permissions(
+            guild.default_role,
+            overwrite=everyone_perms,
+            reason=f"Lockch executado por {ctx.author}"
+        )
+
+        # Bloqueia os outros cargos que tenham permissões explícitas
+        for role in guild.roles:
+            if role.is_default() or role.id == cargo.id:
+                continue
+
+            overwrite = destino.overwrites_for(role)
+
+            if any(value is True for value in (
+                overwrite.send_messages,
+                overwrite.create_public_threads,
+                overwrite.create_private_threads,
+                overwrite.send_messages_in_threads
+            )):
+                overwrite.send_messages = False
+                overwrite.create_public_threads = False
+                overwrite.create_private_threads = False
+                overwrite.send_messages_in_threads = False
+
+                await destino.set_permissions(
+                    role,
+                    overwrite=overwrite,
+                    reason=f"Lockch executado por {ctx.author}"
+                )
+
+        # Bloqueia membros com permissões individuais explícitas
+        for target, overwrite in list(destino.overwrites.items()):
+            if not isinstance(target, discord.Member):
+                continue
+
+            if any(value is True for value in (
+                overwrite.send_messages,
+                overwrite.create_public_threads,
+                overwrite.create_private_threads,
+                overwrite.send_messages_in_threads
+            )):
+                overwrite.send_messages = False
+                overwrite.create_public_threads = False
+                overwrite.create_private_threads = False
+                overwrite.send_messages_in_threads = False
+
+                await destino.set_permissions(
+                    target,
+                    overwrite=overwrite,
+                    reason=f"Lockch executado por {ctx.author}"
+                )
+
+        # Libera o cargo autorizado
+        cargo_perms = destino.overwrites_for(cargo)
+        cargo_perms.send_messages = True
+        cargo_perms.create_public_threads = True
+        cargo_perms.create_private_threads = True
+        cargo_perms.send_messages_in_threads = True
+
+        await destino.set_permissions(
+            cargo,
+            overwrite=cargo_perms,
+            reason=f"Lockch executado por {ctx.author}"
+        )
+
+        aviso = await ctx.send(
+            f"🔒 {destino.mention} foi trancado!\n"
+            f"Somente o cargo {cargo.mention} recebeu permissão "
+            "para falar e criar tópicos."
+        )
+
+        await asyncio.sleep(8)
+        await aviso.delete()
+
+    except discord.Forbidden:
+        aviso = await ctx.send(
+            "❌ Não tenho permissões suficientes para trancar esse canal."
+        )
+        await asyncio.sleep(5)
+        await aviso.delete()
+
+    except discord.HTTPException:
+        aviso = await ctx.send("❌ O Discord retornou um erro ao alterar as permissões.")
+        await asyncio.sleep(5)
+        await aviso.delete()
+
+
+@lockch.error
+async def lockch_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        aviso = await ctx.send(
+            "❌ Você precisa da permissão **Gerenciar Canais** para usar esse comando."
+        )
+        await asyncio.sleep(5)
+        await aviso.delete()
         
 bot.run(TOKEN)
