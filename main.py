@@ -3341,7 +3341,7 @@ async def serverinfo(ctx):
     await ctx.send(embed=embed)
 
 
-@bot.command(name="userinfo")
+@bot.command(name="userinfov2")
 async def userinfo(ctx, membro: discord.Member = None):
     membro = membro or ctx.author
 
