@@ -3214,7 +3214,7 @@ async def unlockcat(ctx, categoria: discord.CategoryChannel = None):
     )
 
 
-@bot.command(name="nick")
+@bot.command(name="nickp")
 @commands.has_permissions(manage_nicknames=True)
 async def nick(ctx, membro: discord.Member, *, apelido: str):
     try:
