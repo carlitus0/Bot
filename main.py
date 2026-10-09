@@ -3318,7 +3318,7 @@ async def restoreperms(ctx):
         await ctx.send("❌ Erro ao restaurar algumas permissões.")
 
 
-@bot.command(name="serverinfo")
+@bot.command(name="serverinfov2")
 async def serverinfo(ctx):
     guild = ctx.guild
 
