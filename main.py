@@ -1593,10 +1593,6 @@ class PixTicketButton(discord.ui.Button):
             ephemeral=True
         )
 
-
-@bot.tree.command(
-    name="configurar_pix",
-    description="Configura o Pix Nubank da loja"
 )
 @app_commands.describe(
     chave="Sua chave Pix",
