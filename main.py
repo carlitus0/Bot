@@ -1593,7 +1593,6 @@ class PixTicketButton(discord.ui.Button):
             ephemeral=True
         )
 
-)
 @app_commands.describe(
     chave="Sua chave Pix",
     titular="Nome do titular da conta"
