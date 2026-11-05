@@ -789,7 +789,390 @@ def run_api():
         port=PORT
     )
 
+# ==========================================
+# PAINEL DE CONFIGURAÇÃO DA LOJA
+# ==========================================
 
+def save_products():
+    with open(PRODUCTS_FILE, "w", encoding="utf-8") as file:
+        json.dump(products, file, ensure_ascii=False, indent=4)
+
+
+class ProductModal(discord.ui.Modal):
+    def __init__(self, product_id=None):
+        super().__init__(title="Cadastrar / Editar Produto")
+
+        self.old_id = product_id
+        product = products.get(product_id, {}) if product_id else {}
+
+        self.product_id = discord.ui.TextInput(
+            label="ID do produto",
+            placeholder="Ex: vip",
+            default=product_id or "",
+            max_length=50
+        )
+
+        self.name = discord.ui.TextInput(
+            label="Nome do produto",
+            placeholder="Ex: VIP",
+            default=product.get("name", ""),
+            max_length=100
+        )
+
+        self.price = discord.ui.TextInput(
+            label="Preço (R$)",
+            placeholder="Ex: 10.00",
+            default=str(product.get("price", "")),
+            max_length=15
+        )
+
+        self.role_id = discord.ui.TextInput(
+            label="ID do cargo entregue",
+            placeholder="ID do cargo no Discord",
+            default=str(product.get("role_id", "")),
+            max_length=25
+        )
+
+        self.description = discord.ui.TextInput(
+            label="Descrição",
+            placeholder="Descrição do produto",
+            default=product.get("description", ""),
+            required=False,
+            max_length=300
+        )
+
+        for item in (
+            self.product_id,
+            self.name,
+            self.price,
+            self.role_id,
+            self.description
+        ):
+            self.add_item(item)
+
+    async def on_submit(self, interaction):
+        pid = str(self.product_id.value).strip()
+        name = str(self.name.value).strip()
+
+        try:
+            price = float(str(self.price.value).replace(",", "."))
+            role_id = int(self.role_id.value.strip())
+
+            if not math.isfinite(price) or price <= 0:
+                raise ValueError
+
+        except ValueError:
+            await interaction.response.send_message(
+                "Preço ou ID do cargo inválido.",
+                ephemeral=True
+            )
+            return
+
+        if pid != self.old_id and pid in products:
+            await interaction.response.send_message(
+                "Já existe um produto com esse ID.",
+                ephemeral=True
+            )
+            return
+
+        if self.old_id is None and len(products) >= 25:
+            await interaction.response.send_message(
+                "Limite de 25 produtos atingido.",
+                ephemeral=True
+            )
+            return
+
+        if self.old_id and self.old_id != pid:
+            products.pop(self.old_id, None)
+
+        products[pid] = {
+            "name": name,
+            "price": price,
+            "role_id": role_id,
+            "description": str(self.description.value).strip()
+        }
+
+        save_products()
+
+        await interaction.response.send_message(
+            f"Produto **{name}** salvo com sucesso!",
+            ephemeral=True
+        )
+
+
+class ProductActionsView(discord.ui.View):
+    def __init__(self, product_id):
+        super().__init__(timeout=180)
+        self.product_id = product_id
+
+    @discord.ui.button(
+        label="Editar",
+        style=discord.ButtonStyle.primary,
+        emoji="✏️"
+    )
+    async def edit(self, interaction, button):
+        if self.product_id not in products:
+            await interaction.response.send_message(
+                "Produto não encontrado.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_modal(
+            ProductModal(self.product_id)
+        )
+
+    @discord.ui.button(
+        label="Excluir",
+        style=discord.ButtonStyle.danger,
+        emoji="🗑️"
+    )
+    async def delete(self, interaction, button):
+        if self.product_id not in products:
+            await interaction.response.send_message(
+                "Produto não encontrado.",
+                ephemeral=True
+            )
+            return
+
+        name = products[self.product_id]["name"]
+
+        del products[self.product_id]
+        save_products()
+
+        await interaction.response.edit_message(
+            content=f"Produto **{name}** excluído.",
+            embed=None,
+            view=None
+        )
+
+
+class ProductManageSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(
+                label=str(product["name"])[:100],
+                description=f"R$ {float(product['price']):.2f}",
+                value=pid
+            )
+            for pid, product in products.items()
+        ]
+
+        super().__init__(
+            placeholder="Gerenciar um produto...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction):
+        pid = self.values[0]
+        product = products.get(pid)
+
+        if not product:
+            await interaction.response.send_message(
+                "Produto não encontrado.",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="Gerenciar produto",
+            description=(
+                f"**Nome:** {product['name']}\n"
+                f"**ID:** `{pid}`\n"
+                f"**Preço:** R$ {float(product['price']):.2f}\n"
+                f"**Cargo:** `{product['role_id']}`\n"
+                f"**Descrição:** {product.get('description') or 'Nenhuma'}"
+            ),
+            color=discord.Color.blurple()
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            view=ProductActionsView(pid),
+            ephemeral=True
+        )
+
+
+class ShopChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="Definir canal da loja",
+            channel_types=[discord.ChannelType.text],
+            min_values=1,
+            max_values=1
+        )
+
+    async def callback(self, interaction):
+        channel = self.values[0]
+
+        set_guild_channel(
+            interaction.guild_id,
+            "shop_channel_id",
+            channel.id
+        )
+
+        await interaction.response.send_message(
+            f"Canal da loja definido: {channel.mention}",
+            ephemeral=True
+        )
+
+
+class LogChannelSelect(discord.ui.ChannelSelect):
+    def __init__(self):
+        super().__init__(
+            placeholder="Definir canal de vendas",
+            channel_types=[discord.ChannelType.text],
+            min_values=1,
+            max_values=1
+        )
+
+    async def callback(self, interaction):
+        channel = self.values[0]
+
+        set_guild_channel(
+            interaction.guild_id,
+            "log_channel_id",
+            channel.id
+        )
+
+        await interaction.response.send_message(
+            f"Canal de vendas definido: {channel.mention}",
+            ephemeral=True
+        )
+
+
+class SetupPublishButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Publicar loja",
+            emoji="🛒",
+            style=discord.ButtonStyle.success
+        )
+
+    async def callback(self, interaction):
+        if not products:
+            await interaction.response.send_message(
+                "Cadastre pelo menos um produto primeiro.",
+                ephemeral=True
+            )
+            return
+
+        config = get_guild_config(interaction.guild_id)
+        channel_id = config["shop_channel_id"]
+
+        if not channel_id:
+            await interaction.response.send_message(
+                "Configure o canal da loja primeiro.",
+                ephemeral=True
+            )
+            return
+
+        channel = interaction.guild.get_channel(channel_id)
+
+        if channel is None:
+            await interaction.response.send_message(
+                "Canal não encontrado. Configure novamente.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            await channel.send(
+                embed=discord.Embed(
+                    title="LOJA OFICIAL — OZEN BOY",
+                    description=(
+                        "Bem-vindo à nossa loja!\n\n"
+                        "Selecione um produto para consultar o preço "
+                        "e gerar seu pagamento via Pix.\n\n"
+                        "A entrega acontece após a confirmação do pagamento."
+                    ),
+                    color=discord.Color.blurple()
+                ),
+                view=ShopView()
+            )
+
+            await interaction.followup.send(
+                f"Loja publicada em {channel.mention}!",
+                ephemeral=True
+            )
+
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "Não tenho permissão para publicar nesse canal.",
+                ephemeral=True
+            )
+
+
+class SetupLojaView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=600)
+
+        self.add_item(
+            discord.ui.Button(
+                label="Cadastrar produto",
+                emoji="➕",
+                style=discord.ButtonStyle.primary,
+                custom_id="setup:add",
+            )
+        )
+
+        self.children[0].callback = self.add_product
+
+        if products:
+            self.add_item(ProductManageSelect())
+
+        self.add_item(ShopChannelSelect())
+        self.add_item(LogChannelSelect())
+        self.add_item(SetupPublishButton())
+
+    async def add_product(self, interaction):
+        await interaction.response.send_modal(ProductModal())
+
+
+@bot.tree.command(
+    name="setup_loja",
+    description="Abre o painel de gerenciamento da loja."
+)
+@admin_only()
+async def setup_loja(interaction):
+    config = get_guild_config(interaction.guild_id)
+
+    shop = (
+        f"<#{config['shop_channel_id']}>"
+        if config["shop_channel_id"] else "Não configurado"
+    )
+
+    logs = (
+        f"<#{config['log_channel_id']}>"
+        if config["log_channel_id"] else "Não configurado"
+    )
+
+    embed = discord.Embed(
+        title="PAINEL DE CONFIGURAÇÃO — LOJA",
+        description=(
+            "Gerencie sua loja diretamente pelo Discord.\n\n"
+            f"**Produtos cadastrados:** {len(products)}/25\n"
+            f"**Canal da loja:** {shop}\n"
+            f"**Canal de vendas:** {logs}\n\n"
+            "Utilize os controles abaixo para configurar sua loja."
+        ),
+        color=discord.Color.blurple()
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        view=SetupLojaView(),
+        ephemeral=True
+    )
+
+
+# ==========================================
+# FIM DO PAINEL
+# ==========================================
 # EXECUTAR
 
 if not DISCORD_TOKEN:
