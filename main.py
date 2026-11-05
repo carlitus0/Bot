@@ -1616,13 +1616,7 @@ async def configurar_pix(
     )
 
 
-@configurar_pix.error
-async def configurar_pix_error(interaction, error):
-    await interaction.response.send_message(
-        "Você precisa ser administrador para configurar o Pix.",
-        ephemeral=True
-                   )
-        
+
 # EXECUTAR
 
 if not DISCORD_TOKEN:
