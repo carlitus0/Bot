@@ -793,6 +793,141 @@ def run_api():
 # PAINEL DE CONFIGURAÇÃO DA LOJA
 # ==========================================
 
+def save_prod
+# PUBLICAR LOJA
+
+@bot.tree.command(
+    name="publicar_loja",
+    description="Publica a loja no canal configurado."
+)
+@admin_only()
+async def publicar_loja(interaction):
+    if not products:
+        await interaction.response.send_message(
+            "Nenhum produto encontrado no products.json.",
+            ephemeral=True
+        )
+        return
+
+    if len(products) > 25:
+        await interaction.response.send_message(
+            "O Discord permite no máximo 25 produtos neste menu.",
+            ephemeral=True
+        )
+        return
+
+    config = get_guild_config(interaction.guild_id)
+    channel_id = config["shop_channel_id"]
+
+    if not channel_id:
+        await interaction.response.send_message(
+            "Configure primeiro o canal com /configurar_loja.",
+            ephemeral=True
+        )
+        return
+
+    channel = interaction.guild.get_channel(channel_id)
+
+    if channel is None:
+        await interaction.response.send_message(
+            "Canal não encontrado. Configure novamente.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        await channel.send(
+            embed=discord.Embed(
+                title="LOJA OFICIAL — OZEN BOY",
+                description=(
+                    "Bem-vindo à nossa loja!\n\n"
+                    "Selecione um produto no menu para consultar o valor "
+                    "e gerar seu pagamento via Pix.\n\n"
+                    "A entrega do cargo ocorre após a confirmação do pagamento pela equipe."
+                ),
+                color=discord.Color.blurple()
+            ),
+            view=ShopView()
+        )
+
+        await interaction.followup.send(
+            f"Loja publicada em {channel.mention}.",
+            ephemeral=True
+        )
+
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "Não tenho permissão para enviar mensagens nesse canal.",
+            ephemeral=True
+        )
+
+
+# VENDAS
+
+@bot.tree.command(
+    name="vendas",
+    description="Consulta as vendas aprovadas deste servidor."
+)
+@admin_only()
+async def vendas(interaction):
+    with database() as conn:
+        total, amount = conn.execute("""
+            SELECT COUNT(*), COALESCE(SUM(amount), 0)
+            FROM orders
+            WHERE status = 'approved' AND guild_id = ?
+        """, (str(interaction.guild_id),)).fetchone()
+
+    embed = discord.Embed(
+        title="Relatório de vendas",
+        color=discord.Color.green()
+    )
+
+    embed.add_field(
+        name="Vendas aprovadas",
+        value=str(total)
+    )
+
+    embed.add_field(
+        name="Total arrecadado",
+        value=f"R$ {amount:.2f}"
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
+
+
+# INICIALIZAÇÃO
+
+@bot.event
+async def on_ready():
+    print(f"Bot conectado como {bot.user}")
+
+    if not getattr(bot, "_persistent_views_registered", False):
+        if products:
+            bot.add_view(ShopView())
+        bot.add_view(PixTicketControls())
+        bot._persistent_views_registered = True
+
+    try:
+        for guild in bot.guilds:
+            guild_object = discord.Object(id=guild.id)
+            bot.tree.copy_global_to(guild=guild_object)
+            await bot.tree.sync(guild=guild_object)
+
+        print("Comandos sincronizados!")
+
+    except Exception as error:
+        print("Erro ao sincronizar comandos:", repr(error))
+
+
+# ==========================================
+# PAINEL DE CONFIGURAÇÃO DA LOJA
+# ==========================================
+
 def save_products():
     with open(PRODUCTS_FILE, "w", encoding="utf-8") as file:
         json.dump(products, file, ensure_ascii=False, indent=4)
@@ -1040,8 +1175,7 @@ class LogChannelSelect(discord.ui.ChannelSelect):
         await interaction.response.send_message(
             f"Canal de vendas definido: {channel.mention}",
             ephemeral=True
-        )
-
+    )
 
 class SetupPublishButton(discord.ui.Button):
     def __init__(self):
@@ -1088,7 +1222,7 @@ class SetupPublishButton(discord.ui.Button):
                         "Bem-vindo à nossa loja!\n\n"
                         "Selecione um produto para consultar o preço "
                         "e gerar seu pagamento via Pix.\n\n"
-                        "A entrega acontece após a confirmação do pagamento."
+                        "A entrega acontece após a confirmação do pagamento pela equipe."
                     ),
                     color=discord.Color.blurple()
                 ),
@@ -1171,21 +1305,10 @@ async def setup_loja(interaction):
 
 
 # ==========================================
-# FIM DO PAINEL
-# ==========================================
-# ==========================================
-# PIX MANUAL - NUBANK
+# PIX NUBANK COM TICKET AUTOMÁTICO
 # ==========================================
 
-# Adicionar configurações ao banco existente
-with database() as conn:
-    for column in ("pix_key", "pix_name"):
-        try:
-            conn.execute(
-                f"ALTER TABLE guild_config ADD COLUMN {column} TEXT"
-            )
-        except sqlite3.OperationalError:
-            pass
+PIX_CATEGORY_NAME = "🛒・PEDIDOS"
 
 
 def save_pix_config(guild_id, key, name):
@@ -1194,8 +1317,8 @@ def save_pix_config(guild_id, key, name):
             INSERT INTO guild_config (guild_id, pix_key, pix_name)
             VALUES (?, ?, ?)
             ON CONFLICT(guild_id) DO UPDATE SET
-            pix_key = excluded.pix_key,
-            pix_name = excluded.pix_name
+                pix_key = excluded.pix_key,
+                pix_name = excluded.pix_name
         """, (str(guild_id), key, name))
 
 
@@ -1210,188 +1333,15 @@ def get_pix_config(guild_id):
     return row if row else (None, None)
 
 
-class PixManualButton(discord.ui.Button):
-    def __init__(self, product_id):
-        super().__init__(
-            label="Pagar com Pix Nubank",
-            emoji="💜",
-            style=discord.ButtonStyle.primary,
-            custom_id=f"manual_pix:{product_id}"
-        )
-        self.product_id = product_id
-
-    async def callback(self, interaction):
-        product = products.get(self.product_id)
-
-        if not product:
-            await interaction.response.send_message(
-                "Produto não encontrado.",
-                ephemeral=True
+# Adiciona as colunas Pix à configuração existente.
+with database() as conn:
+    for column in ("pix_key", "pix_name"):
+        try:
+            conn.execute(
+                f"ALTER TABLE guild_config ADD COLUMN {column} TEXT"
             )
-            return
-
-        key, name = get_pix_config(interaction.guild_id)
-
-        if not key:
-            await interaction.response.send_message(
-                "O Pix manual ainda não foi configurado.",
-                ephemeral=True
-            )
-            return
-
-        payment_id = "manual-" + str(uuid.uuid4())
-
-        create_order(
-            payment_id,
-            interaction.user.id,
-            interaction.guild_id,
-            self.product_id,
-            product["price"]
-        )
-
-        embed = discord.Embed(
-            title="Pagamento via Pix",
-            description=(
-                f"**Produto:** {product['name']}\n"
-                f"**Valor:** R$ {float(product['price']):.2f}\n\n"
-                f"**Chave Pix:**\n```{key}```\n"
-                f"**Titular:** {name}\n\n"
-                f"**Pedido:** `{payment_id}`\n\n"
-                "Copie a chave e faça o pagamento pelo aplicativo "
-                "do seu banco. Depois, aguarde a confirmação."
-            ),
-            color=discord.Color.blurple()
-        )
-
-        await interaction.response.send_message(
-            embed=embed,
-            ephemeral=True
-        )
-
-
-# Adiciona o botão Nubank sem remover o botão existente
-def new_buy_view_init(self, product_id):
-    discord.ui.View.__init__(self, timeout=180)
-    self.add_item(BuyButton(product_id))
-    self.add_item(PixManualButton(product_id))
-
-
-BuyView.__init__ = new_buy_view_init
-
-
-# CONFIGURAR CHAVE PIX
-@bot.tree.command(
-    name="configurar_pix",
-    description="Configura a chave Pix manual da loja."
-)
-@admin_only()
-@app_commands.describe(
-    chave="Sua chave Pix",
-    titular="Nome do titular da conta"
-)
-async def configurar_pix(interaction, chave: str, titular: str):
-    save_pix_config(
-        interaction.guild_id,
-        chave.strip(),
-        titular.strip()
-    )
-
-    await interaction.response.send_message(
-        "Chave Pix configurada com sucesso!",
-        ephemeral=True
-    )
-
-
-# APROVAR PAGAMENTO MANUAL
-@bot.tree.command(
-    name="aprovar_pix",
-    description="Aprova manualmente um pedido Pix após conferir o recebimento."
-)
-@admin_only()
-@app_commands.describe(
-    pedido="Código do pedido mostrado ao comprador"
-)
-async def aprovar_pix(interaction, pedido: str):
-
-    order = get_order(pedido.strip())
-
-    if not order or not order[1].startswith("manual-"):
-        await interaction.response.send_message(
-            "Pedido Pix manual não encontrado.",
-            ephemeral=True
-        )
-        return
-
-    if str(order[3]) != str(interaction.guild_id):
-        await interaction.response.send_message(
-            "Esse pedido pertence a outro servidor.",
-            ephemeral=True
-        )
-        return
-
-    if order[6] == "approved":
-        await interaction.response.send_message(
-            "Esse pedido já foi aprovado.",
-            ephemeral=True
-        )
-        return
-
-    await interaction.response.defer(ephemeral=True)
-
-    success = await deliver_product(order)
-
-    if success:
-        await interaction.followup.send(
-            "Pagamento aprovado e cargo entregue!",
-            ephemeral=True
-        )
-    else:
-        await interaction.followup.send(
-            "Não foi possível entregar o cargo. Confira as permissões e o cargo configurado.",
-            ephemeral=True
-        )
-
-
-# ==========================================
-# FIM DO PIX MANUAL
-# ==========================================
-
-# ==========================================
-# PIX NUBANK COM TICKET AUTOMÁTICO
-# ==========================================
-
-PIX_CATEGORY_NAME = "🛒・PEDIDOS"
-
-
-def pix_setup_database():
-    with sqlite3.connect(DB_FILE) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS pix_config (
-                guild_id INTEGER PRIMARY KEY,
-                pix_key TEXT NOT NULL,
-                pix_name TEXT NOT NULL
-            )
-        """)
-
-
-pix_setup_database()
-
-
-def pix_save_config(guild_id, key, name):
-    with sqlite3.connect(DB_FILE) as conn:
-        conn.execute("""
-            INSERT OR REPLACE INTO pix_config
-            (guild_id, pix_key, pix_name)
-            VALUES (?, ?, ?)
-        """, (guild_id, key, name))
-
-
-def pix_get_config(guild_id):
-    with sqlite3.connect(DB_FILE) as conn:
-        return conn.execute("""
-            SELECT pix_key, pix_name
-            FROM pix_config WHERE guild_id = ?
-        """, (guild_id,)).fetchone()
+        except sqlite3.OperationalError:
+            pass
 
 
 async def pix_get_category(guild):
@@ -1406,36 +1356,34 @@ async def pix_get_category(guild):
     return await guild.create_category(PIX_CATEGORY_NAME)
 
 
-class PixTicketControls(discord.ui.View):
+def get_ticket_order_id(channel):
+    topic = channel.topic or ""
+    return topic.split("|order:", 1)[1] if "|order:" in topic else None
 
-    def __init__(self, order_id):
-        super().__init__(timeout=86400)
-        self.order_id = order_id
+
+class PixTicketControls(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
     @discord.ui.button(
         label="Aprovar pagamento",
         style=discord.ButtonStyle.success,
-        emoji="✅"
+        emoji="✅",
+        custom_id="pix_ticket:approve"
     )
     async def approve(self, interaction, button):
-
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message(
-                "Você não tem permissão para aprovar pagamentos.",
+                "Somente administradores podem aprovar pagamentos.",
                 ephemeral=True
             )
 
-        order = get_order(self.order_id)
+        payment_id = get_ticket_order_id(interaction.channel)
+        order = get_order(payment_id) if payment_id else None
 
-        if not order:
+        if not order or not order[1].startswith("manual-"):
             return await interaction.response.send_message(
-                "Pedido não encontrado.",
-                ephemeral=True
-            )
-
-        if not order[1].startswith("manual-"):
-            return await interaction.response.send_message(
-                "Este não é um pedido Pix manual.",
+                "Pedido Pix não encontrado neste ticket.",
                 ephemeral=True
             )
 
@@ -1446,35 +1394,32 @@ class PixTicketControls(discord.ui.View):
             )
 
         await interaction.response.defer(ephemeral=True)
+        success = await deliver_product(order)
 
-        try:
-            await deliver_product(order)
-
-            await interaction.followup.send(
-                "Pagamento aprovado e produto entregue.",
+        if not success:
+            return await interaction.followup.send(
+                "Não foi possível entregar o cargo. Confira se o cargo existe e se o bot está acima dele na hierarquia.",
                 ephemeral=True
             )
 
-            await interaction.channel.send(
-                "✅ **Pagamento aprovado.** Este pedido foi finalizado."
-            )
-
-        except Exception as e:
-            await interaction.followup.send(
-                f"Erro ao entregar o produto: {e}",
-                ephemeral=True
-            )
+        await interaction.followup.send(
+            "Pagamento aprovado e cargo entregue.",
+            ephemeral=True
+        )
+        await interaction.channel.send(
+            "✅ **Pagamento confirmado pela administração.** O produto foi entregue."
+        )
 
     @discord.ui.button(
         label="Fechar ticket",
         style=discord.ButtonStyle.danger,
-        emoji="🔒"
+        emoji="🔒",
+        custom_id="pix_ticket:close"
     )
     async def close(self, interaction, button):
-
         if not interaction.user.guild_permissions.administrator:
             return await interaction.response.send_message(
-                "Você não tem permissão para fechar este ticket.",
+                "Somente administradores podem fechar este ticket.",
                 ephemeral=True
             )
 
@@ -1486,51 +1431,106 @@ class PixTicketControls(discord.ui.View):
         await interaction.channel.delete()
 
 
-class PixTicketButton(discord.ui.Button):
+async def deliver_product(order):
+    payment_id = order[1]
+    user_id = int(order[2])
+    guild_id = int(order[3])
+    product_id = order[4]
 
-    def __init__(self, product_id):
-        super().__init__(
-            label="Pix Nubank",
-            emoji="💠",
-            style=discord.ButtonStyle.primary
+    guild = bot.get_guild(guild_id)
+
+    if guild is None:
+        return False
+
+    try:
+        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
+    except (
+        discord.NotFound,
+        discord.Forbidden,
+        discord.HTTPException
+    ):
+        return False
+
+    product = products.get(product_id)
+
+    if not product:
+        return False
+
+    role = guild.get_role(int(product["role_id"]))
+
+    if role is None:
+        return False
+
+    try:
+        if role not in member.roles:
+            await member.add_roles(
+                role,
+                reason=f"Compra Pix aprovada: {payment_id}"
+            )
+    except (
+        discord.Forbidden,
+        discord.HTTPException
+    ) as error:
+        print("Erro ao entregar cargo:", repr(error))
+        return False
+
+    update_order(payment_id, "approved")
+
+    try:
+        await send_sale_log(
+            guild_id,
+            user_id,
+            product_id,
+            payment_id
         )
-        self.product_id = product_id
+    except Exception as error:
+        print("Erro ao enviar log:", repr(error))
 
-    async def callback(self, interaction):
-
-        guild = interaction.guild
-        user = interaction.user
-
-        config = pix_get_config(guild.id)
-
-        if not config:
-            return await interaction.response.send_message(
-                "O Pix ainda não foi configurado neste servidor.",
-                ephemeral=True
-            )
-
-        product = products.get(self.product_id)
-
-        if not product:
-            return await interaction.response.send_message(
-                "Produto não encontrado.",
-                ephemeral=True
-            )
-
-        existing = discord.utils.get(
-            guild.text_channels,
-            topic=f"pix-user-{user.id}"
+    return True
+    async def create_pix_ticket(interaction, product_id):
+    if interaction.guild is None:
+        return await interaction.response.send_message(
+            "Use a loja dentro do servidor.",
+            ephemeral=True
         )
 
-        if existing:
-            return await interaction.response.send_message(
-                f"Você já possui um ticket aberto: {existing.mention}",
-                ephemeral=True
-            )
+    guild = interaction.guild
+    user = interaction.user
+    product = products.get(product_id)
 
-        await interaction.response.defer(ephemeral=True)
+    if not product:
+        return await interaction.response.send_message(
+            "Produto não encontrado.",
+            ephemeral=True
+        )
 
+    key, holder = get_pix_config(guild.id)
+
+    if not key or not holder:
+        return await interaction.response.send_message(
+            "O Pix ainda não foi configurado. Peça a um administrador para usar /configurar_pix.",
+            ephemeral=True
+        )
+
+    existing = next(
+        (
+            channel for channel in guild.text_channels
+            if (channel.topic or "").startswith(f"pix-user:{user.id}|")
+        ),
+        None
+    )
+
+    if existing:
+        return await interaction.response.send_message(
+            f"Você já tem um pedido aberto: {existing.mention}",
+            ephemeral=True
+        )
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
         category = await pix_get_category(guild)
+        bot_member = guild.me or await guild.fetch_member(bot.user.id)
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(
@@ -1540,9 +1540,10 @@ class PixTicketButton(discord.ui.Button):
                 view_channel=True,
                 send_messages=True,
                 read_message_history=True,
-                attach_files=True
+                attach_files=True,
+                embed_links=True
             ),
-            guild.me: discord.PermissionOverwrite(
+            bot_member: discord.PermissionOverwrite(
                 view_channel=True,
                 send_messages=True,
                 read_message_history=True,
@@ -1551,41 +1552,46 @@ class PixTicketButton(discord.ui.Button):
         }
 
         channel = await guild.create_text_channel(
-            name=f"pedido-{user.name}".lower()[:90],
+            name=f"pedido-{user.id}",
             category=category,
             overwrites=overwrites,
-            topic=f"pix-user-{user.id}"
+            topic=f"pix-user:{user.id}|order:pending"
         )
 
-        payment_id = "manual-" + str(uuid.uuid4())
+        payment_id = "manual-" + uuid.uuid4().hex
 
         create_order(
             payment_id,
             user.id,
             guild.id,
-            self.product_id,
+            product_id,
             product["price"]
         )
 
+        await channel.edit(
+            topic=f"pix-user:{user.id}|order:{payment_id}"
+        )
+
         embed = discord.Embed(
-            title="💠 Pagamento via Pix Nubank",
+            title="Pagamento via Pix Nubank",
             description=(
-                f"Olá, {user.mention}!\n\n"
+                f"**Cliente:** {user.mention}\n"
                 f"**Produto:** {product['name']}\n"
                 f"**Valor:** R$ {float(product['price']):.2f}\n\n"
-                f"**Chave Pix:**\n`{config[0]}`\n\n"
-                f"**Titular:** {config[1]}\n\n"
-                f"**Código do pedido:**\n`{payment_id}`\n\n"
-                "Após realizar o pagamento, envie o comprovante "
-                "neste canal. A staff irá conferir o recebimento."
+                f"**Chave Pix:**\n```{key}```\n"
+                f"**Titular:** {holder}\n\n"
+                f"**Código do pedido:**\n```{payment_id}```\n\n"
+                "Faça o Pix pelo aplicativo do seu banco e envie o comprovante aqui.\n"
+                "A equipe precisa confirmar o recebimento na conta bancária antes de aprovar.\n\n"
+                "⚠️ O envio de comprovante, sozinho, não confirma o pagamento."
             ),
-            color=discord.Color.blue()
+            color=discord.Color.blurple()
         )
 
         await channel.send(
-            content=f"{user.mention}",
+            content=user.mention,
             embed=embed,
-            view=PixTicketControls(payment_id)
+            view=PixTicketControls()
         )
 
         await interaction.followup.send(
@@ -1593,28 +1599,46 @@ class PixTicketButton(discord.ui.Button):
             ephemeral=True
         )
 
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "Não consegui criar o ticket. Confira se tenho permissão para gerenciar canais.",
+            ephemeral=True
+        )
+    except Exception as error:
+        print("Erro ao criar ticket Pix:", repr(error))
+        await interaction.followup.send(
+            "Ocorreu um erro ao criar seu pedido. Avise a administração.",
+            ephemeral=True
+        )
+
+
+# CONFIGURAR PIX
+
+@bot.tree.command(
+    name="configurar_pix",
+    description="Configura a chave Pix e o titular da loja."
+)
+@admin_only()
 @app_commands.describe(
-    chave="Sua chave Pix",
+    chave="Chave Pix que receberá os pagamentos",
     titular="Nome do titular da conta"
 )
-@app_commands.checks.has_permissions(administrator=True)
-async def configurar_pix(
-    interaction: discord.Interaction,
-    chave: str,
-    titular: str
-):
+async def configurar_pix(interaction: discord.Interaction, chave: str, titular: str):
+    chave = chave.strip()
+    titular = titular.strip()
 
-    pix_save_config(
-        interaction.guild.id,
-        chave.strip(),
-        titular.strip()
-    )
+    if not chave or not titular:
+        return await interaction.response.send_message(
+            "Informe uma chave Pix e o nome do titular válidos.",
+            ephemeral=True
+        )
+
+    save_pix_config(interaction.guild_id, chave, titular)
 
     await interaction.response.send_message(
-        "✅ Pix Nubank configurado.",
+        "Chave Pix e titular configurados.",
         ephemeral=True
     )
-
 
 
 # EXECUTAR
@@ -1623,9 +1647,5 @@ if not DISCORD_TOKEN:
     raise RuntimeError(
         "DISCORD_TOKEN não configurado no Railway."
     )
-Thread(
-    target=run_api,
-    daemon=True
-).start()
 
 bot.run(DISCORD_TOKEN)
