@@ -1173,6 +1173,188 @@ async def setup_loja(interaction):
 # ==========================================
 # FIM DO PAINEL
 # ==========================================
+# ==========================================
+# PIX MANUAL - NUBANK
+# ==========================================
+
+# Adicionar configurações ao banco existente
+with database() as conn:
+    for column in ("pix_key", "pix_name"):
+        try:
+            conn.execute(
+                f"ALTER TABLE guild_config ADD COLUMN {column} TEXT"
+            )
+        except sqlite3.OperationalError:
+            pass
+
+
+def save_pix_config(guild_id, key, name):
+    with database() as conn:
+        conn.execute("""
+            INSERT INTO guild_config (guild_id, pix_key, pix_name)
+            VALUES (?, ?, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET
+            pix_key = excluded.pix_key,
+            pix_name = excluded.pix_name
+        """, (str(guild_id), key, name))
+
+
+def get_pix_config(guild_id):
+    with database() as conn:
+        row = conn.execute("""
+            SELECT pix_key, pix_name
+            FROM guild_config
+            WHERE guild_id = ?
+        """, (str(guild_id),)).fetchone()
+
+    return row if row else (None, None)
+
+
+class PixManualButton(discord.ui.Button):
+    def __init__(self, product_id):
+        super().__init__(
+            label="Pagar com Pix Nubank",
+            emoji="💜",
+            style=discord.ButtonStyle.primary,
+            custom_id=f"manual_pix:{product_id}"
+        )
+        self.product_id = product_id
+
+    async def callback(self, interaction):
+        product = products.get(self.product_id)
+
+        if not product:
+            await interaction.response.send_message(
+                "Produto não encontrado.",
+                ephemeral=True
+            )
+            return
+
+        key, name = get_pix_config(interaction.guild_id)
+
+        if not key:
+            await interaction.response.send_message(
+                "O Pix manual ainda não foi configurado.",
+                ephemeral=True
+            )
+            return
+
+        payment_id = "manual-" + str(uuid.uuid4())
+
+        create_order(
+            payment_id,
+            interaction.user.id,
+            interaction.guild_id,
+            self.product_id,
+            product["price"]
+        )
+
+        embed = discord.Embed(
+            title="Pagamento via Pix",
+            description=(
+                f"**Produto:** {product['name']}\n"
+                f"**Valor:** R$ {float(product['price']):.2f}\n\n"
+                f"**Chave Pix:**\n```{key}```\n"
+                f"**Titular:** {name}\n\n"
+                f"**Pedido:** `{payment_id}`\n\n"
+                "Copie a chave e faça o pagamento pelo aplicativo "
+                "do seu banco. Depois, aguarde a confirmação."
+            ),
+            color=discord.Color.blurple()
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
+
+
+# Adiciona o botão Nubank sem remover o botão existente
+def new_buy_view_init(self, product_id):
+    discord.ui.View.__init__(self, timeout=180)
+    self.add_item(BuyButton(product_id))
+    self.add_item(PixManualButton(product_id))
+
+
+BuyView.__init__ = new_buy_view_init
+
+
+# CONFIGURAR CHAVE PIX
+@bot.tree.command(
+    name="configurar_pix",
+    description="Configura a chave Pix manual da loja."
+)
+@admin_only()
+@app_commands.describe(
+    chave="Sua chave Pix",
+    titular="Nome do titular da conta"
+)
+async def configurar_pix(interaction, chave: str, titular: str):
+    save_pix_config(
+        interaction.guild_id,
+        chave.strip(),
+        titular.strip()
+    )
+
+    await interaction.response.send_message(
+        "Chave Pix configurada com sucesso!",
+        ephemeral=True
+    )
+
+
+# APROVAR PAGAMENTO MANUAL
+@bot.tree.command(
+    name="aprovar_pix",
+    description="Aprova manualmente um pedido Pix após conferir o recebimento."
+)
+@admin_only()
+@app_commands.describe(
+    pedido="Código do pedido mostrado ao comprador"
+)
+async def aprovar_pix(interaction, pedido: str):
+
+    order = get_order(pedido.strip())
+
+    if not order or not order[1].startswith("manual-"):
+        await interaction.response.send_message(
+            "Pedido Pix manual não encontrado.",
+            ephemeral=True
+        )
+        return
+
+    if str(order[3]) != str(interaction.guild_id):
+        await interaction.response.send_message(
+            "Esse pedido pertence a outro servidor.",
+            ephemeral=True
+        )
+        return
+
+    if order[6] == "approved":
+        await interaction.response.send_message(
+            "Esse pedido já foi aprovado.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    success = await deliver_product(order)
+
+    if success:
+        await interaction.followup.send(
+            "Pagamento aprovado e cargo entregue!",
+            ephemeral=True
+        )
+    else:
+        await interaction.followup.send(
+            "Não foi possível entregar o cargo. Confira as permissões e o cargo configurado.",
+            ephemeral=True
+        )
+
+
+# ==========================================
+# FIM DO PIX MANUAL
+# ==========================================
 # EXECUTAR
 
 if not DISCORD_TOKEN:
