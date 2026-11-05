@@ -2,178 +2,187 @@ import os
 import json
 import sqlite3
 import asyncio
+import uuid
+import hmac
+import hashlib
+import base64
+import io
+import math
+from threading import Thread
+
 import requests
 import discord
-
 from discord.ext import commands
 from discord import app_commands
 from fastapi import FastAPI, Request, HTTPException
-from threading import Thread
+from fastapi.responses import JSONResponse
 import uvicorn
 
-# ==============================
+
 # CONFIGURAÇÕES
-# ==============================
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 MP_TOKEN = os.getenv("MP_ACCESS_TOKEN")
-
-GUILD_ID = int(os.getenv("GUILD_ID", "0"))
-SHOP_CHANNEL_ID = int(os.getenv("SHOP_CHANNEL_ID", "0"))
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", "0"))
-
 PORT = int(os.getenv("PORT", "8080"))
 
 DB_FILE = "bot.db"
 PRODUCTS_FILE = "products.json"
 
-# ==============================
+
 # PRODUTOS
-# ==============================
 
 def load_products():
     try:
         with open(PRODUCTS_FILE, "r", encoding="utf-8") as file:
-            return json.load(file)
+            data = json.load(file)
+            return data if isinstance(data, dict) else {}
     except FileNotFoundError:
+        print("AVISO: products.json não encontrado.")
         return {}
+    except json.JSONDecodeError:
+        print("ERRO: products.json inválido.")
+        return {}
+
 
 products = load_products()
 
-# ==============================
+
 # BANCO DE DADOS
-# ==============================
 
 def database():
-    return sqlite3.connect(DB_FILE)
+    return sqlite3.connect(DB_FILE, timeout=30)
+
 
 def setup_database():
-    conn = database()
-    cursor = conn.cursor()
+    with database() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                payment_id TEXT UNIQUE,
+                user_id TEXT NOT NULL,
+                guild_id TEXT NOT NULL,
+                product_id TEXT NOT NULL,
+                amount REAL NOT NULL,
+                status TEXT DEFAULT 'pending'
+            )
+        """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            payment_id TEXT UNIQUE,
-            user_id TEXT,
-            guild_id TEXT,
-            product_id TEXT,
-            amount REAL,
-            status TEXT DEFAULT 'pending'
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS guild_config (
+                guild_id TEXT PRIMARY KEY,
+                shop_channel_id TEXT,
+                log_channel_id TEXT
+            )
+        """)
+
+
+def set_guild_channel(guild_id, column, channel_id):
+    if column not in ("shop_channel_id", "log_channel_id"):
+        raise ValueError("Configuração inválida.")
+
+    with database() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO guild_config (guild_id, {column})
+            VALUES (?, ?)
+            ON CONFLICT(guild_id)
+            DO UPDATE SET {column} = excluded.{column}
+            """,
+            (str(guild_id), str(channel_id))
         )
-    """)
 
-    conn.commit()
-    conn.close()
+
+def get_guild_config(guild_id):
+    with database() as conn:
+        row = conn.execute("""
+            SELECT shop_channel_id, log_channel_id
+            FROM guild_config
+            WHERE guild_id = ?
+        """, (str(guild_id),)).fetchone()
+
+    if not row:
+        return {"shop_channel_id": None, "log_channel_id": None}
+
+    return {
+        "shop_channel_id": int(row[0]) if row[0] else None,
+        "log_channel_id": int(row[1]) if row[1] else None
+    }
+
+
+def create_order(payment_id, user_id, guild_id, product_id, amount):
+    with database() as conn:
+        conn.execute("""
+            INSERT INTO orders
+            (payment_id, user_id, guild_id, product_id, amount, status)
+            VALUES (?, ?, ?, ?, ?, 'pending')
+        """, (
+            str(payment_id),
+            str(user_id),
+            str(guild_id),
+            str(product_id),
+            float(amount)
+        ))
+
+
+def get_order(payment_id):
+    with database() as conn:
+        return conn.execute(
+            "SELECT * FROM orders WHERE payment_id = ?",
+            (str(payment_id),)
+        ).fetchone()
+
+
+def update_order(payment_id, status):
+    with database() as conn:
+        conn.execute(
+            "UPDATE orders SET status = ? WHERE payment_id = ?",
+            (status, str(payment_id))
+        )
+
 
 setup_database()
 
-# ==============================
-# REGISTRAR PEDIDO
-# ==============================
 
-def create_order(payment_id, user_id, guild_id, product_id, amount):
-    conn = database()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        INSERT INTO orders
-        (payment_id, user_id, guild_id, product_id, amount)
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        str(payment_id),
-        str(user_id),
-        str(guild_id),
-        str(product_id),
-        float(amount)
-    ))
-
-    conn.commit()
-    conn.close()
-
-# ==============================
-# BUSCAR PEDIDO
-# ==============================
-
-def get_order(payment_id):
-    conn = database()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT * FROM orders WHERE payment_id = ?",
-        (str(payment_id),)
-    )
-
-    result = cursor.fetchone()
-    conn.close()
-
-    return result
-
-# ==============================
-# ATUALIZAR PEDIDO
-# ==============================
-
-def update_order(payment_id, status):
-    conn = database()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        UPDATE orders
-        SET status = ?
-        WHERE payment_id = ?
-    """, (status, str(payment_id)))
-
-    conn.commit()
-    conn.close()
-
-# ==============================
 # BOT DISCORD
-# ==============================
 
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 
-bot = commands.Bot(
-    command_prefix="!",
-    intents=intents
-)
-
+bot = commands.Bot(command_prefix="!", intents=intents)
 api = FastAPI()
-# ==============================
-# CRIAR PAGAMENTO PIX
-# ==============================
+persistent_view_registered = False
+
+
+# MERCADO PAGO
 
 def create_pix_payment(user_id, guild_id, product_id, email):
-    product = products.get(product_id)
+    if not MP_TOKEN:
+        raise RuntimeError("MP_ACCESS_TOKEN não configurado.")
 
+    product = products.get(product_id)
     if not product:
         raise ValueError("Produto não encontrado.")
 
     amount = float(product["price"])
 
-    url = "https://api.mercadopago.com/v1/payments"
-
-    headers = {
-        "Authorization": f"Bearer {MP_TOKEN}",
-        "Content-Type": "application/json",
-        "X-Idempotency-Key": f"{user_id}-{product_id}-{asyncio.get_event_loop().time()}"
-    }
-
-    data = {
-        "transaction_amount": amount,
-        "description": product["name"],
-        "payment_method_id": "pix",
-        "payer": {
-            "email": email
-        },
-        "external_reference": f"{user_id}:{guild_id}:{product_id}"
-    }
+    if amount <= 0:
+        raise ValueError("Preço inválido.")
 
     response = requests.post(
-        url,
-        headers=headers,
-        json=data,
+        "https://api.mercadopago.com/v1/payments",
+        headers={
+            "Authorization": f"Bearer {MP_TOKEN}",
+            "Content-Type": "application/json",
+            "X-Idempotency-Key": str(uuid.uuid4())
+        },
+        json={
+            "transaction_amount": amount,
+            "description": str(product["name"]),
+            "payment_method_id": "pix",
+            "payer": {"email": email},
+            "external_reference": f"{user_id}:{guild_id}:{product_id}"
+        },
         timeout=30
     )
 
@@ -181,7 +190,6 @@ def create_pix_payment(user_id, guild_id, product_id, email):
     payment = response.json()
 
     payment_id = payment["id"]
-
     transaction = payment["point_of_interaction"]["transaction_data"]
 
     create_order(
@@ -199,9 +207,21 @@ def create_pix_payment(user_id, guild_id, product_id, email):
     }
 
 
-# ==============================
+def get_payment(payment_id):
+    if not MP_TOKEN:
+        raise RuntimeError("MP_ACCESS_TOKEN não configurado.")
+
+    response = requests.get(
+        f"https://api.mercadopago.com/v1/payments/{payment_id}",
+        headers={"Authorization": f"Bearer {MP_TOKEN}"},
+        timeout=30
+    )
+
+    response.raise_for_status()
+    return response.json()
+
+
 # MODAL DE E-MAIL
-# ==============================
 
 class EmailModal(discord.ui.Modal):
     def __init__(self, product_id):
@@ -217,7 +237,14 @@ class EmailModal(discord.ui.Modal):
 
         self.add_item(self.email)
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(self, interaction):
+        if interaction.guild_id is None:
+            await interaction.response.send_message(
+                "Use a loja dentro do servidor.",
+                ephemeral=True
+            )
+            return
+
         await interaction.response.defer(ephemeral=True)
 
         try:
@@ -232,99 +259,103 @@ class EmailModal(discord.ui.Modal):
             embed = discord.Embed(
                 title="Pagamento Pix criado",
                 description=(
-                    "**Copie o código abaixo e pague pelo aplicativo do seu banco.**\n\n"
+                    "Copie o código abaixo e pague pelo aplicativo do seu banco.\n\n"
                     f"```{payment['qr_code']}```\n"
                     f"ID do pagamento: `{payment['id']}`"
                 ),
                 color=discord.Color.green()
             )
 
+            file = None
+
             if payment["qr_base64"]:
-                import base64
                 image_bytes = base64.b64decode(payment["qr_base64"])
                 file = discord.File(
-                    fp=__import__("io").BytesIO(image_bytes),
+                    io.BytesIO(image_bytes),
                     filename="pix.png"
                 )
                 embed.set_image(url="attachment://pix.png")
-                await interaction.followup.send(
-                    embed=embed,
-                    file=file,
-                    ephemeral=True
-                )
-            else:
-                await interaction.followup.send(
-                    embed=embed,
-                    ephemeral=True
-                )
+
+            await interaction.followup.send(
+                embed=embed,
+                file=file,
+                ephemeral=True
+            )
 
         except Exception as error:
-            print("Erro ao criar Pix:", error)
+            print("Erro ao criar Pix:", repr(error))
             await interaction.followup.send(
-                "Não foi possível criar o pagamento. Tente novamente mais tarde.",
+                "Não foi possível criar o pagamento.",
                 ephemeral=True
             )
 
 
-# ==============================
-# MENU DE PRODUTOS
-# ==============================
+# MENU E BOTÃO DE COMPRA
+
+class BuyButton(discord.ui.Button):
+    def __init__(self, product_id):
+        super().__init__(
+            label="Continuar",
+            style=discord.ButtonStyle.success,
+            custom_id=f"buy:{product_id}"
+        )
+        self.product_id = product_id
+
+    async def callback(self, interaction):
+        await interaction.response.send_modal(
+            EmailModal(self.product_id)
+        )
+
+
+class BuyView(discord.ui.View):
+    def __init__(self, product_id):
+        super().__init__(timeout=180)
+        self.add_item(BuyButton(product_id))
+
 
 class ProductSelect(discord.ui.Select):
     def __init__(self):
-        options = []
-
-        for product_id, product in products.items():
-            options.append(
-                discord.SelectOption(
-                    label=product["name"][:100],
-                    description=f"R$ {float(product['price']):.2f}",
-                    value=product_id
-                )
+        options = [
+            discord.SelectOption(
+                label=str(product["name"])[:100],
+                description=f"R$ {float(product['price']):.2f}",
+                value=product_id
             )
+            for product_id, product in list(products.items())[:25]
+        ]
 
         super().__init__(
             placeholder="Selecione um produto...",
             min_values=1,
             max_values=1,
-            options=options
+            options=options,
+            custom_id="shop:product_select"
         )
 
-    async def callback(self, interaction: discord.Interaction):
+    async def callback(self, interaction):
         product_id = self.values[0]
-        product = products[product_id]
+        product = products.get(product_id)
+
+        if not product:
+            await interaction.response.send_message(
+                "Produto indisponível.",
+                ephemeral=True
+            )
+            return
 
         embed = discord.Embed(
             title="Confirmar compra",
             description=(
                 f"**Produto:** {product['name']}\n"
                 f"**Valor:** R$ {float(product['price']):.2f}\n\n"
-                "Clique no botão abaixo para gerar seu Pix."
+                "Clique abaixo para gerar seu Pix."
             ),
             color=discord.Color.blurple()
         )
 
-        view = discord.ui.View()
-        view.add_item(
-            discord.ui.Button(
-                label="Continuar",
-                style=discord.ButtonStyle.success,
-                custom_id=f"buy_{product_id}"
-            )
-        )
-
-        button = view.children[0]
-
-        async def buy_callback(button_interaction):
-            await button_interaction.response.send_modal(
-                EmailModal(product_id)
-            )
-
-        button.callback = buy_callback
-
         await interaction.response.send_message(
             embed=embed,
-            view=view,
+            view=BuyView(product_id),
             ephemeral=True
         )
 
@@ -335,15 +366,26 @@ class ShopView(discord.ui.View):
         self.add_item(ProductSelect())
 
 
-# ==============================
 # LOG DE VENDAS
-# ==============================
 
 async def send_sale_log(guild_id, user_id, product_id, payment_id):
-    channel = bot.get_channel(LOG_CHANNEL_ID)
+    config = get_guild_config(int(guild_id))
+    channel_id = config["log_channel_id"]
 
-    if not channel:
+    if not channel_id:
         return
+
+    channel = bot.get_channel(channel_id)
+
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except (
+            discord.NotFound,
+            discord.Forbidden,
+            discord.HTTPException
+        ):
+            return
 
     product = products.get(product_id, {})
     guild = bot.get_guild(int(guild_id))
@@ -373,16 +415,11 @@ async def send_sale_log(guild_id, user_id, product_id, payment_id):
     )
 
     await channel.send(embed=embed)
-import hmac
-import hashlib
-from fastapi.responses import JSONResponse
 
 
-# ==============================
-# VERIFICAR ASSINATURA DO WEBHOOK
-# ==============================
+# WEBHOOK
 
-def verify_signature(request: Request, payment_id):
+def verify_signature(request, payment_id):
     secret = os.getenv("MP_WEBHOOK_SECRET")
 
     if not secret:
@@ -390,7 +427,6 @@ def verify_signature(request: Request, payment_id):
 
     signature = request.headers.get("x-signature", "")
     request_id = request.headers.get("x-request-id", "")
-
     parts = {}
 
     for item in signature.split(","):
@@ -405,40 +441,19 @@ def verify_signature(request: Request, payment_id):
         return False
 
     manifest = (
-        f"id:{payment_id};"
+        f"id:{str(payment_id).lower()};"
         f"request-id:{request_id};"
         f"ts:{timestamp};"
     )
 
     calculated_hash = hmac.new(
-        secret.encode(),
-        manifest.encode(),
+        secret.encode("utf-8"),
+        manifest.encode("utf-8"),
         hashlib.sha256
     ).hexdigest()
 
     return hmac.compare_digest(calculated_hash, received_hash)
 
-
-# ==============================
-# CONSULTAR PAGAMENTO NO MERCADO PAGO
-# ==============================
-
-def get_payment(payment_id):
-    response = requests.get(
-        f"https://api.mercadopago.com/v1/payments/{payment_id}",
-        headers={
-            "Authorization": f"Bearer {MP_TOKEN}"
-        },
-        timeout=30
-    )
-
-    response.raise_for_status()
-    return response.json()
-
-
-# ==============================
-# ENTREGAR PRODUTO
-# ==============================
 
 async def deliver_product(order):
     payment_id = order[1]
@@ -448,53 +463,65 @@ async def deliver_product(order):
 
     guild = bot.get_guild(guild_id)
 
-    if not guild:
+    if guild is None:
         return False
 
-    member = guild.get_member(user_id)
-
-    if not member:
-        try:
-            member = await guild.fetch_member(user_id)
-        except discord.NotFound:
-            return False
+    try:
+        member = guild.get_member(user_id) or await guild.fetch_member(user_id)
+    except (
+        discord.NotFound,
+        discord.Forbidden,
+        discord.HTTPException
+    ):
+        return False
 
     product = products.get(product_id)
 
     if not product:
         return False
 
-    role_id = int(product["role_id"])
-    role = guild.get_role(role_id)
+    role = guild.get_role(int(product["role_id"]))
 
-    if not role:
+    if role is None:
         return False
 
-    if role not in member.roles:
-        await member.add_roles(
-            role,
-            reason=f"Compra Pix aprovada: {payment_id}"
-        )
+    try:
+        if role not in member.roles:
+            await member.add_roles(
+                role,
+                reason=f"Compra Pix aprovada: {payment_id}"
+            )
+    except (
+        discord.Forbidden,
+        discord.HTTPException
+    ) as error:
+        print("Erro ao entregar cargo:", repr(error))
+        return False
 
     update_order(payment_id, "approved")
 
-    await send_sale_log(
-        guild_id,
-        user_id,
-        product_id,
-        payment_id
-    )
+    try:
+        await send_sale_log(
+            guild_id,
+            user_id,
+            product_id,
+            payment_id
+        )
+    except Exception as error:
+        print("Erro ao enviar log:", repr(error))
 
     return True
 
 
-# ==============================
-# WEBHOOK MERCADO PAGO
-# ==============================
-
 @api.post("/webhook")
 async def mercado_pago_webhook(request: Request):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="JSON inválido"
+        )
 
     payment_id = (
         body.get("data", {}).get("id")
@@ -527,14 +554,7 @@ async def mercado_pago_webhook(request: Request):
         if order[6] == "approved":
             return {"status": "já processado"}
 
-        product = products.get(order[4])
-
-        if not product:
-            return {"status": "produto não encontrado"}
-
-        expected_reference = (
-            f"{order[2]}:{order[3]}:{order[4]}"
-        )
+        expected_reference = f"{order[2]}:{order[3]}:{order[4]}"
 
         if payment.get("external_reference") != expected_reference:
             raise HTTPException(
@@ -543,9 +563,15 @@ async def mercado_pago_webhook(request: Request):
             )
 
         if payment.get("status") == "approved":
+            paid_amount = float(payment.get("transaction_amount", 0))
+            expected_amount = float(order[5])
+
             if (
-                float(payment.get("transaction_amount", 0))
-                != float(order[5])
+                not math.isclose(
+                    paid_amount,
+                    expected_amount,
+                    abs_tol=0.01
+                )
                 or payment.get("currency_id") != "BRL"
             ):
                 raise HTTPException(
@@ -571,70 +597,143 @@ async def mercado_pago_webhook(request: Request):
         raise
 
     except Exception as error:
-        print("Erro no webhook:", error)
-
+        print("Erro no webhook:", repr(error))
         raise HTTPException(
             status_code=500,
             detail="Erro interno"
         )
 
 
-# ==============================
-# COMANDO PUBLICAR LOJA
-# ==============================
+# COMANDOS DE CONFIGURAÇÃO
 
-@bot.tree.command(
-    name="publicar_loja",
-    description="Publica o catálogo da loja."
-)
-@app_commands.checks.has_permissions(administrator=True)
-async def publicar_loja(interaction: discord.Interaction):
-
-    embed = discord.Embed(
-        title="🛒 LOJA OFICIAL — OZEN BOY",
-        description=(
-            "Bem-vindo à nossa loja!\n\n"
-            "Selecione um produto no menu abaixo para consultar "
-            "o valor e realizar sua compra via Pix.\n\n"
-            "A entrega é feita automaticamente após a confirmação "
-            "do pagamento."
-        ),
-        color=discord.Color.blurple()
+def admin_only():
+    return app_commands.checks.has_permissions(
+        administrator=True
     )
 
-    await interaction.channel.send(
-        embed=embed,
-        view=ShopView()
+
+@bot.tree.command(
+    name="configurar_loja",
+    description="Define o canal onde a loja será publicada."
+)
+@admin_only()
+@app_commands.describe(canal="Canal de texto para publicar a loja")
+async def configurar_loja(interaction, canal: discord.TextChannel):
+    set_guild_channel(
+        interaction.guild_id,
+        "shop_channel_id",
+        canal.id
     )
 
     await interaction.response.send_message(
-        "Loja publicada!",
+        f"Canal da loja definido para {canal.mention}.",
         ephemeral=True
     )
 
 
-# ==============================
-# COMANDO VENDAS
-# ==============================
+@bot.tree.command(
+    name="configurar_logs",
+    description="Define o canal que receberá os registros de vendas."
+)
+@admin_only()
+@app_commands.describe(canal="Canal de texto para os logs")
+async def configurar_logs(interaction, canal: discord.TextChannel):
+    set_guild_channel(
+        interaction.guild_id,
+        "log_channel_id",
+        canal.id
+    )
+
+    await interaction.response.send_message(
+        f"Canal de logs definido para {canal.mention}.",
+        ephemeral=True
+    )
+
+
+# PUBLICAR LOJA
+
+@bot.tree.command(
+    name="publicar_loja",
+    description="Publica a loja no canal configurado."
+)
+@admin_only()
+async def publicar_loja(interaction):
+    if not products:
+        await interaction.response.send_message(
+            "Nenhum produto encontrado no products.json.",
+            ephemeral=True
+        )
+        return
+
+    if len(products) > 25:
+        await interaction.response.send_message(
+            "O Discord permite no máximo 25 produtos neste menu.",
+            ephemeral=True
+        )
+        return
+
+    config = get_guild_config(interaction.guild_id)
+    channel_id = config["shop_channel_id"]
+
+    if not channel_id:
+        await interaction.response.send_message(
+            "Configure primeiro o canal com /configurar_loja.",
+            ephemeral=True
+        )
+        return
+
+    channel = interaction.guild.get_channel(channel_id)
+
+    if channel is None:
+        await interaction.response.send_message(
+            "Canal não encontrado. Configure novamente.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        await channel.send(
+            embed=discord.Embed(
+                title="LOJA OFICIAL — OZEN BOY",
+                description=(
+                    "Bem-vindo à nossa loja!\n\n"
+                    "Selecione um produto no menu para consultar o valor "
+                    "e gerar seu pagamento via Pix.\n\n"
+                    "A entrega do cargo ocorre após a confirmação do pagamento."
+                ),
+                color=discord.Color.blurple()
+            ),
+            view=ShopView()
+        )
+
+        await interaction.followup.send(
+            f"Loja publicada em {channel.mention}.",
+            ephemeral=True
+        )
+
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "Não tenho permissão para enviar mensagens nesse canal.",
+            ephemeral=True
+        )
+
+
+# VENDAS
 
 @bot.tree.command(
     name="vendas",
-    description="Consulta o total de vendas aprovadas."
+    description="Consulta as vendas aprovadas deste servidor."
 )
-@app_commands.checks.has_permissions(administrator=True)
-async def vendas(interaction: discord.Interaction):
-
-    conn = database()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT COUNT(*), COALESCE(SUM(amount), 0)
-        FROM orders
-        WHERE status = 'approved'
-    """)
-
-    total, amount = cursor.fetchone()
-    conn.close()
+@admin_only()
+async def vendas(interaction):
+    with database() as conn:
+        total, amount = conn.execute("""
+            SELECT COUNT(*), COALESCE(SUM(amount), 0)
+            FROM orders
+            WHERE status = 'approved' AND guild_id = ?
+        """, (str(interaction.guild_id),)).fetchone()
 
     embed = discord.Embed(
         title="Relatório de vendas",
@@ -657,31 +756,31 @@ async def vendas(interaction: discord.Interaction):
     )
 
 
-# ==============================
-# INICIALIZAÇÃO DO BOT
-# ==============================
+# INICIALIZAÇÃO
 
 @bot.event
 async def on_ready():
+    global persistent_view_registered
+
     print(f"Bot conectado como {bot.user}")
 
+    if products and not persistent_view_registered:
+        bot.add_view(ShopView())
+        persistent_view_registered = True
+
     try:
-        if GUILD_ID:
-            guild = discord.Object(id=GUILD_ID)
-            bot.tree.copy_global_to(guild=guild)
-            await bot.tree.sync(guild=guild)
-        else:
-            await bot.tree.sync()
+        for guild in bot.guilds:
+            guild_object = discord.Object(id=guild.id)
+            bot.tree.copy_global_to(guild=guild_object)
+            await bot.tree.sync(guild=guild_object)
 
         print("Comandos sincronizados!")
 
     except Exception as error:
-        print("Erro ao sincronizar comandos:", error)
+        print("Erro ao sincronizar comandos:", repr(error))
 
 
-# ==============================
 # SERVIDOR WEB
-# ==============================
 
 def run_api():
     uvicorn.run(
@@ -691,19 +790,15 @@ def run_api():
     )
 
 
-# ==============================
 # EXECUTAR
-# ==============================
 
-if not TOKEN:
-    raise RuntimeError("DISCORD_TOKEN não configurado.")
-
-if not MP_TOKEN:
-    raise RuntimeError("MP_ACCESS_TOKEN não configurado.")
-
+if not DISCORD_TOKEN:
+    raise RuntimeError(
+        "DISCORD_TOKEN não configurado no Railway."
+    )
 Thread(
     target=run_api,
     daemon=True
 ).start()
 
-bot.run(TOKEN)
+bot.run(DISCORD_TOKEN)
