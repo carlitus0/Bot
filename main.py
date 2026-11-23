@@ -1825,6 +1825,11 @@ async def atualizar_lista_equipe(guild: discord.Guild):
         str(message.id)
     )
 
+bot = TicketBot(
+    command_prefix=PREFIX,
+    intents=intents,
+    help_command=None
+)
 
 # =========================================================
 # 27. COMANDOS DE CONFIGURAÇÃO
@@ -2404,11 +2409,6 @@ class TicketBot(commands.Bot):
         await super().close()
 
 
-bot = TicketBot(
-    command_prefix=PREFIX,
-    intents=intents,
-    help_command=None
-)
 
 
 @bot.event
