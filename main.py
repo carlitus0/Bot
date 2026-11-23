@@ -2,6 +2,8 @@ import os
 import io
 import html
 import asyncio
+import re
+import unicodedata
 from datetime import datetime, timezone
 
 import discord
@@ -11,7 +13,7 @@ import asyncpg
 
 
 # ==========================================
-# CONFIGURAÇÕES DO DISCORD
+# CONFIGURAÇÕES
 # ==========================================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -50,17 +52,31 @@ TICKET_TYPES = [
 ]
 
 EMBED_COLOR = discord.Colour.from_rgb(128, 128, 128)
+
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 intents.message_content = True
 
+db_pool = None
+
+
+# ==========================================
+# FUNÇÕES AUXILIARES
+# ==========================================
+
+def gerar_nome_ticket(categoria, numero):
+    nome = unicodedata.normalize("NFKD", categoria)
+    nome = nome.encode("ascii", "ignore").decode("ascii")
+    nome = nome.lower()
+    nome = re.sub(r"[^a-z0-9]+", "-", nome).strip("-")
+
+    return f"{nome}-{numero:04d}"
+
+
 # ==========================================
 # BANCO DE DADOS SUPABASE
 # ==========================================
-
-db_pool = None
-
 
 async def connect_database():
     global db_pool
@@ -77,7 +93,6 @@ async def connect_database():
     )
 
     async with db_pool.acquire() as conn:
-
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS ticket_counter (
                 id INTEGER PRIMARY KEY,
@@ -121,7 +136,6 @@ async def next_ticket_number():
 
 async def save_ticket(number, guild_id, channel_id,
                       opener_id, category):
-
     async with db_pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO tickets (
@@ -186,13 +200,7 @@ async def close_ticket_db(number, closer_id, reason):
 # TRANSCRIPT HTML
 # ==========================================
 
-async def create_transcript(
-    channel,
-    ticket,
-    opener,
-    closer,
-    reason
-):
+async def create_transcript(channel, ticket, opener, closer, reason):
     messages = []
 
     async for message in channel.history(
@@ -276,7 +284,7 @@ async def create_transcript(
         </style>
     </head>
     <body>
-        <h2>Transcript — ticket-{ticket['ticket_number']:04d}</h2>
+        <h2>Transcript — {html.escape(channel.name)}</h2>
 
         <div class="info">
             <p><b>Categoria:</b> {html.escape(ticket['category'])}</p>
@@ -322,7 +330,6 @@ class TicketSelect(discord.ui.Select):
         )
 
     async def callback(self, interaction):
-
         await interaction.response.defer(
             ephemeral=True,
             thinking=True
@@ -374,7 +381,7 @@ class TicketSelect(discord.ui.Select):
                 )
 
         number = await next_ticket_number()
-        channel_name = f"ticket-{number:04d}"
+        channel_name = gerar_nome_ticket(category_name, number)
 
         bot_member = guild.me
 
@@ -426,18 +433,38 @@ class TicketSelect(discord.ui.Select):
             raise
 
         embed = discord.Embed(
-            title=f"🎫 Ticket #{number:04d}",
+            title="🎫 Atendimento iniciado!",
             description=(
-                f"Olá, {member.mention}!\n\n"
-                f"**Assunto:** {category_name}\n\n"
-                "Explique sua solicitação e aguarde "
-                "o atendimento da equipe."
+                f"Olá, {member.mention}! Seu atendimento foi criado "
+                "com sucesso.\n\n"
+                "Nossa equipe recebeu sua solicitação. "
+                "Enquanto aguarda, descreva seu problema ou pedido "
+                "com o máximo de detalhes possível.\n\n"
+                "**Informações do atendimento**"
             ),
             color=EMBED_COLOR
         )
 
+        embed.add_field(
+            name="📁 Categoria",
+            value=category_name,
+            inline=True
+        )
+
+        embed.add_field(
+            name="🔢 Protocolo",
+            value=f"#{number:04d}",
+            inline=True
+        )
+
+        embed.add_field(
+            name="👤 Solicitante",
+            value=member.mention,
+            inline=True
+        )
+
         embed.set_footer(
-            text="Central de Atendimento"
+            text="Central de Atendimento • Aguarde nossa equipe."
         )
 
         await channel.send(
@@ -447,15 +474,27 @@ class TicketSelect(discord.ui.Select):
         )
 
         try:
-            await member.send(
-                f"Seu ticket **{channel_name}** foi aberto "
-                f"no servidor **{guild.name}**."
+            dm_embed = discord.Embed(
+                title="🎫 Seu atendimento foi aberto!",
+                description=(
+                    f"Seu ticket no servidor **{guild.name}** "
+                    "foi criado com sucesso.\n\n"
+                    f"**Protocolo:** #{number:04d}\n"
+                    f"**Categoria:** {category_name}\n"
+                    f"**Canal:** #{channel.name}\n\n"
+                    "Nossa equipe atenderá sua solicitação assim "
+                    "que possível."
+                ),
+                color=EMBED_COLOR
             )
-        except discord.Forbidden:
+
+            await member.send(embed=dm_embed)
+
+        except (discord.Forbidden, discord.HTTPException):
             pass
 
         await interaction.followup.send(
-            f"Seu ticket foi criado: {channel.mention}",
+            f"Seu atendimento foi criado com sucesso: {channel.mention}",
             ephemeral=True
         )
 
@@ -473,12 +512,12 @@ class TicketPanelView(discord.ui.View):
 
 class CloseReasonModal(
     discord.ui.Modal,
-    title="Fechar ticket"
+    title="Fechar atendimento"
 ):
 
     reason = discord.ui.TextInput(
         label="Motivo do fechamento",
-        placeholder="Informe o motivo do fechamento...",
+        placeholder="Informe o motivo do encerramento...",
         style=discord.TextStyle.paragraph,
         min_length=3,
         max_length=500,
@@ -486,7 +525,6 @@ class CloseReasonModal(
     )
 
     async def on_submit(self, interaction):
-
         channel = interaction.channel
         guild = interaction.guild
         closer = interaction.user
@@ -538,12 +576,53 @@ class CloseReasonModal(
                 opener = await bot.fetch_user(
                     ticket["opener_id"]
                 )
-            except discord.NotFound:
+            except (discord.NotFound, discord.HTTPException):
                 opener = discord.Object(
                     id=ticket["opener_id"]
                 )
 
         reason_text = str(self.reason.value)
+
+        close_embed = discord.Embed(
+            title="🔒 Atendimento finalizado",
+            description=(
+                "Este atendimento foi encerrado pela equipe.\n\n"
+                "Agradecemos por entrar em contato conosco. "
+                "Esperamos ter ajudado!\n\n"
+                "**Resumo do encerramento**"
+            ),
+            color=EMBED_COLOR
+        )
+
+        close_embed.add_field(
+            name="📁 Categoria",
+            value=ticket["category"],
+            inline=True
+        )
+
+        close_embed.add_field(
+            name="🔢 Protocolo",
+            value=f"#{ticket['ticket_number']:04d}",
+            inline=True
+        )
+
+        close_embed.add_field(
+            name="🛡️ Fechado por",
+            value=closer.mention,
+            inline=True
+        )
+
+        close_embed.add_field(
+            name="📝 Motivo",
+            value=reason_text,
+            inline=False
+        )
+
+        close_embed.set_footer(
+            text="Central de Atendimento"
+        )
+
+        await channel.send(embed=close_embed)
 
         transcript = await create_transcript(
             channel,
@@ -554,31 +633,41 @@ class CloseReasonModal(
         )
 
         log_embed = discord.Embed(
-            title=f"📁 Ticket #{ticket['ticket_number']:04d} fechado",
+            title=f"📁 Atendimento #{ticket['ticket_number']:04d} encerrado",
+            description=(
+                "O atendimento foi finalizado e o transcript "
+                "foi registrado."
+            ),
             color=EMBED_COLOR,
             timestamp=datetime.now(timezone.utc)
         )
 
         log_embed.add_field(
-            name="Aberto por",
+            name="👤 Aberto por",
             value=f"{opener} (`{opener.id}`)",
             inline=False
         )
 
         log_embed.add_field(
-            name="Fechado por",
+            name="🛡️ Fechado por",
             value=f"{closer} (`{closer.id}`)",
             inline=False
         )
 
         log_embed.add_field(
-            name="Categoria",
+            name="📁 Categoria",
             value=ticket["category"],
             inline=True
         )
 
         log_embed.add_field(
-            name="Motivo",
+            name="🔢 Protocolo",
+            value=f"#{ticket['ticket_number']:04d}",
+            inline=True
+        )
+
+        log_embed.add_field(
+            name="📝 Motivo",
             value=reason_text,
             inline=False
         )
@@ -588,6 +677,7 @@ class CloseReasonModal(
                 embed=log_embed,
                 file=transcript
             )
+
         except discord.HTTPException:
             return await interaction.followup.send(
                 "Não foi possível enviar o transcript. "
@@ -602,129 +692,28 @@ class CloseReasonModal(
         )
 
         try:
-            await opener.send(
-                f"Seu ticket **ticket-{ticket['ticket_number']:04d}** "
-                f"no servidor **{guild.name}** foi fechado.\n"
-                f"**Motivo:** {reason_text}"
+            dm_embed = discord.Embed(
+                title="🔒 Seu atendimento foi encerrado",
+                description=(
+                    f"Seu ticket no servidor **{guild.name}** "
+                    "foi finalizado pela equipe.\n\n"
+                    f"**Protocolo:** #{ticket['ticket_number']:04d}\n"
+                    f"**Categoria:** {ticket['category']}\n"
+                    f"**Fechado por:** {closer}\n"
+                    f"**Motivo:** {reason_text}\n\n"
+                    "Agradecemos por entrar em contato conosco!"
+                ),
+                color=EMBED_COLOR
             )
+
+            await opener.send(embed=dm_embed)
+
         except (discord.Forbidden, discord.HTTPException):
             pass
 
         await interaction.followup.send(
-            "Ticket fechado. O transcript foi enviado aos logs.",
+            "Atendimento encerrado. O transcript foi enviado aos logs.",
             ephemeral=True
         )
 
-        await asyncio.sleep(3)
-
-        await channel.delete(
-            reason=f"Ticket fechado por {closer}"
-        )
-
-
-class TicketControlView(discord.ui.View):
-
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(
-        label="Fechar ticket",
-        emoji="🔒",
-        style=discord.ButtonStyle.secondary,
-        custom_id="ticket:close"
-    )
-    async def close_button(
-        self,
-        interaction,
-        button
-    ):
-        await interaction.response.send_modal(
-            CloseReasonModal()
-        )
-
-
-# ==========================================
-# COMANDO DO PAINEL
-# ==========================================
-# ==========================================
-# BOT E COMANDO DO PAINEL
-# ==========================================
-
-class TicketBot(commands.Bot):
-
-    async def setup_hook(self):
-        await connect_database()
-
-        self.add_view(TicketPanelView())
-        self.add_view(TicketControlView())
-
-        await self.tree.sync()
-
-    async def close(self):
-        if db_pool:
-            await db_pool.close()
-        await super().close()
-
-
-bot = TicketBot(
-    command_prefix="!",
-    intents=intents
-)
-
-
-@bot.tree.command(
-    name="painel-ticket",
-    description="Envia o painel da Central de Atendimento."
-)
-@app_commands.checks.has_permissions(administrator=True)
-async def painel_ticket(interaction: discord.Interaction):
-
-    embed = discord.Embed(
-        title=PANEL_TITLE,
-        description=PANEL_DESCRIPTION,
-        color=EMBED_COLOR
-    )
-
-    embed.set_image(url=PANEL_IMAGE)
-    embed.set_footer(
-        text="Selecione uma opção abaixo para começar."
-    )
-
-    await interaction.channel.send(
-        embed=embed,
-        view=TicketPanelView()
-    )
-
-    await interaction.response.send_message(
-        "Painel enviado com sucesso.",
-        ephemeral=True
-    )
-
-
-@painel_ticket.error
-async def painel_ticket_error(interaction, error):
-
-    if isinstance(error, app_commands.MissingPermissions):
-        message = "Você precisa ser administrador."
-    else:
-        message = "Ocorreu um erro ao enviar o painel."
-
-    if interaction.response.is_done():
-        await interaction.followup.send(message, ephemeral=True)
-    else:
-        await interaction.response.send_message(message, ephemeral=True)
-
-
-@bot.event
-async def on_ready():
-    print(f"Bot conectado como {bot.user}")
-    print("Sistema de tickets iniciado.")
-
-
-if not TOKEN:
-    raise RuntimeError("DISCORD_TOKEN não configurado.")
-
-if not DB_PASSWORD:
-    raise RuntimeError("SUPABASE_DB_PASSWORD não configurada.")
-
-bot.run(TOKEN)
+        a
