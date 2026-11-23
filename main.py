@@ -1629,9 +1629,7 @@ class PartnershipReviewButton(discord.ui.Button):
 # =========================================================
 # 24. CRIAÇÃO DOS CARGOS DO SISTEMA
 # =========================================================
-
-async def cria
-r_cargo_sistema(guild, role_name):
+async def criar_cargo_sistema(guild, role_name):
     existing = discord.utils.get(guild.roles, name=role_name)
 
     if existing:
