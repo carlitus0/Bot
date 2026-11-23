@@ -1,3 +1,7 @@
+# =========================================================
+# 01. IMPORTS E CONFIGURAÇÕES GERAIS
+# =========================================================
+
 import os
 import io
 import re
@@ -5,32 +9,40 @@ import json
 import html
 import asyncio
 import unicodedata
+import traceback
 
 from datetime import datetime, timezone
+from typing import Optional
 
 import discord
 from discord.ext import commands
 from discord import app_commands
+
 import asyncpg
 
 
 # =========================================================
-# 1. CONFIGURAÇÕES GERAIS
+# 1.1 VARIÁVEIS DE AMBIENTE
 # =========================================================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 DB_PASSWORD = os.getenv("SUPABASE_DB_PASSWORD")
 
+DB_HOST = os.getenv(
+    "SUPABASE_DB_HOST",
+    "aws-0-us-west-2.pooler.supabase.com"
+)
+
+DB_PORT = int(os.getenv("SUPABASE_DB_PORT", "5432"))
+
+DB_USER = os.getenv(
+    "SUPABASE_DB_USER",
+    "postgres.sdtivbtxtujgdizxyhed"
+)
+
+DB_NAME = os.getenv("SUPABASE_DB_NAME", "postgres")
+
 PREFIX = "!"
-EMBED_COLOR = discord.Colour.from_rgb(128, 128, 128)
-
-intents = discord.Intents.default()
-intents.guilds = True
-intents.members = True
-intents.message_content = True
-intents.moderation = True
-
-db_pool = None
 
 if not TOKEN:
     raise RuntimeError("DISCORD_TOKEN não configurado.")
@@ -40,7 +52,29 @@ if not DB_PASSWORD:
 
 
 # =========================================================
-# 2. TIPOS DE TICKETS
+# 1.2 CONFIGURAÇÕES VISUAIS
+# =========================================================
+
+EMBED_COLOR = discord.Colour.from_rgb(128, 128, 128)
+
+TICKET_IMAGE_URL = (
+    "https://cdn.discordapp.com/attachments/1573540268878077984/"
+    "1574494273016172624/Central_de_Atendimento_Roxa.png"
+    "?ex=6b05d98f&is=6b04880f"
+    "&hm=d2a83f98a563cb8ac43cce815ba3bb52"
+    "e78e9b3d8b88be000e215dbcee20623878&"
+)
+
+
+# =========================================================
+# 1.3 BANCO DE DADOS
+# =========================================================
+
+db_pool: Optional[asyncpg.Pool] = None
+
+
+# =========================================================
+# 1.4 TIPOS DE TICKETS
 # =========================================================
 
 TICKET_TYPES = [
@@ -55,307 +89,31 @@ TICKET_TYPES = [
 
 
 # =========================================================
-# 3. CARGOS DO SISTEMA
+# 1.5 INTENTS DO DISCORD
 # =========================================================
 
-ROLE_GROUPS = {
-    "direcao": {
-        "label": "Direção",
-        "roles": [
-            "Diretor Geral",
-            "Server Manager",
-            "Bot Manager",
-        ],
-    },
-    "administracao": {
-        "label": "Administração",
-        "roles": [
-            "Admin",
-            "Admin Jr",
-        ],
-    },
-    "moderacao": {
-        "label": "Moderação",
-        "roles": [
-            "Mod",
-            "Mod Jr",
-        ],
-    },
-    "suporte": {
-        "label": "Suporte",
-        "roles": [
-            "Suporte",
-            "Suporte Jr",
-        ],
-    },
-    "criacao": {
-        "label": "Equipe criativa",
-        "roles": [
-            "Criador de Eventos",
-            "Designer",
-        ],
-    },
-    "membros": {
-        "label": "Membros",
-        "roles": [
-            "Super Ativo",
-            "Iniciante",
-            "VIP",
-            "Parceiro",
-            "Apoiador",
-            "Membro Antigo",
-            "Verificado",
-        ],
-    },
-}
+intents = discord.Intents.default()
 
-ROLE_COLORS = {
-    "Diretor Geral": discord.Colour.from_rgb(180, 40, 40),
-    "Server Manager": discord.Colour.from_rgb(190, 90, 40),
-    "Bot Manager": discord.Colour.from_rgb(90, 80, 190),
-    "Admin": discord.Colour.from_rgb(200, 50, 50),
-    "Admin Jr": discord.Colour.from_rgb(210, 100, 100),
-    "Mod": discord.Colour.from_rgb(40, 110, 210),
-    "Mod Jr": discord.Colour.from_rgb(80, 150, 220),
-    "Suporte": discord.Colour.from_rgb(40, 160, 130),
-    "Suporte Jr": discord.Colour.from_rgb(80, 190, 160),
-    "Criador de Eventos": discord.Colour.from_rgb(180, 100, 220),
-    "Designer": discord.Colour.from_rgb(230, 120, 180),
-    "Super Ativo": discord.Colour.from_rgb(230, 190, 50),
-    "Iniciante": discord.Colour.from_rgb(140, 140, 140),
-    "VIP": discord.Colour.from_rgb(240, 190, 50),
-    "Parceiro": discord.Colour.from_rgb(80, 170, 220),
-    "Apoiador": discord.Colour.from_rgb(70, 190, 120),
-    "Membro Antigo": discord.Colour.from_rgb(150, 120, 80),
-    "Verificado": discord.Colour.from_rgb(80, 180, 100),
-}
-
-
+intents.guilds = True
+intents.members = True
+intents.message_content = True
+intents.moderation = True
 # =========================================================
-# 4. CONFIGURAÇÕES PADRÃO
+# 02. BANCO DE DADOS SUPABASE
 # =========================================================
 
-DEFAULT_CONFIG = {
-    # Tickets
-    "ticket_category_id": None,
-    "transcript_channel_id": None,
-    "staff_role_id": None,
-    "ticket_panel_channel_id": None,
-    "log_ticket_channel_id": None,
-
-    # Parcerias
-    "partnership_category_id": None,
-    "partnership_channel_id": None,
-    "partnership_role_id": None,
-    "log_partnership_channel_id": None,
-
-    # Staff
-    "staff_chat_channel_id": None,
-    "staff_announcements_channel_id": None,
-    "staff_information_channel_id": None,
-    "staff_proofs_channel_id": None,
-    "staff_meetings_channel_id": None,
-    "staff_support_channel_id": None,
-    "staff_changelog_channel_id": None,
-    "staff_punishment_channel_id": None,
-    "staff_list_channel_id": None,
-
-    # Administração
-    "admin_owner_chat_channel_id": None,
-    "admin_director_chat_channel_id": None,
-    "admin_announcements_channel_id": None,
-    "admin_planning_channel_id": None,
-    "admin_team_channel_id": None,
-    "admin_appeals_channel_id": None,
-    "admin_settings_channel_id": None,
-    "admin_reports_channel_id": None,
-
-    # Logs separados
-    "log_server_channel_id": None,
-    "log_member_channel_id": None,
-    "log_role_channel_id": None,
-    "log_punishment_channel_id": None,
-    "log_bot_channel_id": None,
-    "log_moderation_channel_id": None,
-    "log_staff_channel_id": None,
-    "log_admin_channel_id": None,
-
-    # Autorole
-    "bot_autorole_id": None,
-
-    # Lista Staff
-    "staff_list_message_id": None,
-
-    # Cargos
-    "admin_role_id": None,
-    "director_role_id": None,
-    "moderator_role_id": None,
-    "support_role_id": None,
-
-    # Outros
-    "welcome_channel_id": None,
-    "leave_channel_id": None,
-}
-
-
-# =========================================================
-# 5. GRUPOS DE CONFIGURAÇÃO
-# =========================================================
-
-CONFIG_GROUPS = {
-    "tickets": {
-        "label": "🎫 Tickets",
-        "keys": [
-            "ticket_category_id",
-            "transcript_channel_id",
-            "staff_role_id",
-            "ticket_panel_channel_id",
-            "log_ticket_channel_id",
-        ],
-    },
-
-    "partnerships": {
-        "label": "🤝 Parcerias",
-        "keys": [
-            "partnership_category_id",
-            "partnership_channel_id",
-            "partnership_role_id",
-            "log_partnership_channel_id",
-        ],
-    },
-
-    "staff": {
-        "label": "🛡️ Staff",
-        "keys": [
-            "staff_chat_channel_id",
-            "staff_announcements_channel_id",
-            "staff_information_channel_id",
-            "staff_proofs_channel_id",
-            "staff_meetings_channel_id",
-            "staff_support_channel_id",
-            "staff_changelog_channel_id",
-            "staff_punishment_channel_id",
-            "staff_list_channel_id",
-            "moderator_role_id",
-            "support_role_id",
-        ],
-    },
-
-    "administration": {
-        "label": "⚙️ Administração",
-        "keys": [
-            "admin_owner_chat_channel_id",
-            "admin_director_chat_channel_id",
-            "admin_announcements_channel_id",
-            "admin_planning_channel_id",
-            "admin_team_channel_id",
-            "admin_appeals_channel_id",
-            "admin_settings_channel_id",
-            "admin_reports_channel_id",
-            "admin_role_id",
-            "director_role_id",
-        ],
-    },
-
-    "logs": {
-        "label": "📁 Logs",
-        "keys": [
-            "log_server_channel_id",
-            "log_member_channel_id",
-            "log_role_channel_id",
-            "log_punishment_channel_id",
-            "log_bot_channel_id",
-            "log_ticket_channel_id",
-            "log_partnership_channel_id",
-            "log_moderation_channel_id",
-            "log_staff_channel_id",
-            "log_admin_channel_id",
-        ],
-    },
-
-    "automation": {
-        "label": "🤖 Automação",
-        "keys": [
-            "bot_autorole_id",
-            "welcome_channel_id",
-            "leave_channel_id",
-        ],
-    },
-}
-
-
-# =========================================================
-# 6. NOMES DAS CONFIGURAÇÕES
-# =========================================================
-
-CONFIG_LABELS = {
-    "ticket_category_id": "Categoria dos tickets",
-    "transcript_channel_id": "Canal de transcripts",
-    "staff_role_id": "Cargo Staff",
-    "ticket_panel_channel_id": "Canal do painel de tickets",
-    "log_ticket_channel_id": "Logs de tickets",
-
-    "partnership_category_id": "Categoria de parcerias",
-    "partnership_channel_id": "Canal de parcerias",
-    "partnership_role_id": "Cargo responsável por parcerias",
-    "log_partnership_channel_id": "Logs de parcerias",
-
-    "staff_chat_channel_id": "Chat Staff",
-    "staff_announcements_channel_id": "Avisos Staff",
-    "staff_information_channel_id": "Informações Staff",
-    "staff_proofs_channel_id": "Provas de punições",
-    "staff_meetings_channel_id": "Reuniões Staff",
-    "staff_support_channel_id": "Atendimento Staff",
-    "staff_changelog_channel_id": "Changelog",
-    "staff_punishment_channel_id": "Solicitações de punição",
-    "staff_list_channel_id": "Lista Staff",
-
-    "admin_owner_chat_channel_id": "Chat do proprietário",
-    "admin_director_chat_channel_id": "Chat da diretoria",
-    "admin_announcements_channel_id": "Comunicados administrativos",
-    "admin_planning_channel_id": "Planejamento",
-    "admin_team_channel_id": "Gerenciamento de equipe",
-    "admin_appeals_channel_id": "Revisão de punições",
-    "admin_settings_channel_id": "Configurações administrativas",
-    "admin_reports_channel_id": "Relatórios",
-
-    "log_server_channel_id": "Logs do servidor",
-    "log_member_channel_id": "Logs de membros",
-    "log_role_channel_id": "Logs de cargos",
-    "log_punishment_channel_id": "Logs de punições",
-    "log_bot_channel_id": "Logs de bots",
-    "log_moderation_channel_id": "Logs de moderação",
-    "log_staff_channel_id": "Logs da equipe",
-    "log_admin_channel_id": "Logs administrativos",
-
-    "bot_autorole_id": "Cargo automático para bots",
-    "welcome_channel_id": "Canal de entrada",
-    "leave_channel_id": "Canal de saída",
-
-    "admin_role_id": "Cargo Administrador",
-    "director_role_id": "Cargo Diretoria",
-    "moderator_role_id": "Cargo Moderador",
-    "support_role_id": "Cargo Suporte",
-}
-
-
-# =========================================================
-# 7. CONEXÃO COM SUPABASE
-# =========================================================
-
-async def connect_database():
+async def conectar_db():
     global db_pool
 
     db_pool = await asyncpg.create_pool(
-        host="aws-0-us-west-2.pooler.supabase.com",
-        port=5432,
-        database="postgres",
-        user="postgres.sdtivbtxtujgdizxyhed",
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
         password=DB_PASSWORD,
+        database=DB_NAME,
         ssl="require",
         min_size=1,
-        max_size=5,
-        command_timeout=60,
+        max_size=5
     )
 
     async with db_pool.acquire() as conn:
@@ -363,63 +121,30 @@ async def connect_database():
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS bot_config (
                 guild_id BIGINT PRIMARY KEY,
-                settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+                data JSONB NOT NULL DEFAULT '{}'::jsonb,
                 updated_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """)
+            );
 
-        await conn.execute("""
             CREATE TABLE IF NOT EXISTS ticket_counters (
                 guild_id BIGINT PRIMARY KEY,
                 last_number BIGINT NOT NULL DEFAULT 0
-            )
-        """)
+            );
 
-        await conn.execute("""
             CREATE TABLE IF NOT EXISTS tickets (
-                ticket_number BIGINT PRIMARY KEY,
+                id BIGSERIAL PRIMARY KEY,
                 guild_id BIGINT NOT NULL,
-                channel_id BIGINT NOT NULL UNIQUE,
-                opener_id BIGINT NOT NULL,
-                category TEXT NOT NULL,
-                opened_at TIMESTAMPTZ NOT NULL,
-                closed_at TIMESTAMPTZ,
-                closer_id BIGINT,
-                close_reason TEXT,
+                channel_id BIGINT UNIQUE NOT NULL,
+                user_id BIGINT NOT NULL,
+                ticket_number BIGINT NOT NULL,
+                ticket_type TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'open',
                 claimed_by BIGINT,
-                claimed_at TIMESTAMPTZ
-            )
-        """)
-
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS partnerships (
-                id BIGSERIAL PRIMARY KEY,
-                guild_id BIGINT NOT NULL,
-                applicant_id BIGINT NOT NULL,
-                server_name TEXT NOT NULL,
-                invite_link TEXT NOT NULL,
-                description TEXT,
-                status TEXT NOT NULL DEFAULT 'pending',
-                reviewed_by BIGINT,
                 created_at TIMESTAMPTZ DEFAULT NOW(),
-                reviewed_at TIMESTAMPTZ,
-                published_message_id BIGINT
-            )
-        """)
+                closed_at TIMESTAMPTZ,
+                closed_by BIGINT,
+                close_reason TEXT
+            );
 
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS bot_logs (
-                id BIGSERIAL PRIMARY KEY,
-                guild_id BIGINT NOT NULL,
-                actor_id BIGINT,
-                action TEXT NOT NULL,
-                details JSONB NOT NULL DEFAULT '{}'::jsonb,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """)
-
-        await conn.execute("""
             CREATE TABLE IF NOT EXISTS moderation_history (
                 id BIGSERIAL PRIMARY KEY,
                 guild_id BIGINT NOT NULL,
@@ -428,1342 +153,1913 @@ async def connect_database():
                 action TEXT NOT NULL,
                 reason TEXT,
                 created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """)
+            );
 
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS staff_activity (
+            CREATE TABLE IF NOT EXISTS bot_logs (
                 id BIGSERIAL PRIMARY KEY,
                 guild_id BIGINT NOT NULL,
-                staff_id BIGINT NOT NULL,
-                action TEXT NOT NULL,
-                details JSONB NOT NULL DEFAULT '{}'::jsonb,
+                event TEXT NOT NULL,
+                details TEXT,
                 created_at TIMESTAMPTZ DEFAULT NOW()
-            )
+            );
         """)
 
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS role_creation_history (
-                id BIGSERIAL PRIMARY KEY,
-                guild_id BIGINT NOT NULL,
-                role_id BIGINT NOT NULL,
-                role_name TEXT NOT NULL,
-                created_by BIGINT,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """)
-
-        # Compatibilidade com instalações anteriores
-        await conn.execute("""
-            ALTER TABLE tickets
-            ADD COLUMN IF NOT EXISTS claimed_by BIGINT
-        """)
-
-        await conn.execute("""
-            ALTER TABLE tickets
-            ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ
-        """)
-
-        await conn.execute("""
-            ALTER TABLE partnerships
-            ADD COLUMN IF NOT EXISTS published_message_id BIGINT
-        """)
-
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_tickets_guild_status
-            ON tickets(guild_id, status)
-        """)
-
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_partnerships_guild_status
-            ON partnerships(guild_id, status)
-        """)
-
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_bot_logs_guild
-            ON bot_logs(guild_id, created_at DESC)
-        """)
-
-    print("Supabase conectado e tabelas verificadas.", flush=True)
+    print("Conexão com Supabase estabelecida.")
 
 
 # =========================================================
-# 8. CONFIGURAÇÕES DO SERVIDOR
+# 2.1 GERAR NUMERAÇÃO DOS TICKETS
 # =========================================================
 
-async def get_config(guild_id):
-    async with db_pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT settings
-            FROM bot_config
-            WHERE guild_id = $1
-        """, guild_id)
-
-    settings = dict(DEFAULT_CONFIG)
-
-    if row:
-        saved = row["settings"]
-
-        if isinstance(saved, str):
-            saved = json.loads(saved)
-
-        if saved:
-            settings.update(saved)
-
-    return settings
-
-
-async def set_config(guild_id, key, value):
-    if key not in DEFAULT_CONFIG:
-        raise ValueError("Configuração desconhecida.")
+async def gerar_numero_ticket(guild_id: int) -> int:
 
     async with db_pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO bot_config (
-                guild_id,
-                settings,
-                updated_at
-            )
-            VALUES ($1, $2::jsonb, NOW())
-            ON CONFLICT (guild_id)
-            DO UPDATE SET
-                settings = bot_config.settings || EXCLUDED.settings,
-                updated_at = NOW()
-        """,
-            guild_id,
-            json.dumps({key: value})
-        )
 
-
-async def set_configs(guild_id, values):
-    invalid = set(values) - set(DEFAULT_CONFIG)
-
-    if invalid:
-        raise ValueError(f"Configurações inválidas: {invalid}")
-
-    async with db_pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO bot_config (
-                guild_id,
-                settings,
-                updated_at
-            )
-            VALUES ($1, $2::jsonb, NOW())
-            ON CONFLICT (guild_id)
-            DO UPDATE SET
-                settings = bot_config.settings || EXCLUDED.settings,
-                updated_at = NOW()
-        """,
-            guild_id,
-            json.dumps(values)
-        )
-
-
-# =========================================================
-# 9. SISTEMA DE LOGS NO BANCO
-# =========================================================
-
-async def registrar_log(
-    guild_id,
-    actor_id,
-    action,
-    details=None
-):
-    async with db_pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO bot_logs (
-                guild_id,
-                actor_id,
-                action,
-                details
-            )
-            VALUES ($1, $2, $3, $4::jsonb)
-        """,
-            guild_id,
-            actor_id,
-            action,
-            json.dumps(
-                details or {},
-                ensure_ascii=False,
-                default=str
-            )
-        )
-
-
-async def registrar_atividade_staff(
-    guild_id,
-    staff_id,
-    action,
-    details=None
-):
-    async with db_pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO staff_activity (
-                guild_id,
-                staff_id,
-                action,
-                details
-            )
-            VALUES ($1, $2, $3, $4::jsonb)
-        """,
-            guild_id,
-            staff_id,
-            action,
-            json.dumps(
-                details or {},
-                ensure_ascii=False,
-                default=str
-            )
-        )
-
-
-# =========================================================
-# 10. FUNÇÕES AUXILIARES
-# =========================================================
-
-def gerar_nome_ticket(categoria, numero):
-    nome = unicodedata.normalize("NFKD", categoria)
-    nome = nome.encode("ascii", "ignore").decode("ascii")
-    nome = nome.lower()
-    nome = re.sub(r"[^a-z0-9]+", "-", nome).strip("-")
-
-    return f"{nome}-{numero:04d}"
-
-
-def is_admin(member):
-    return (
-        isinstance(member, discord.Member)
-        and member.guild_permissions.administrator
-    )
-
-
-def check_admin(interaction):
-    return (
-        interaction.guild is not None
-        and isinstance(interaction.user, discord.Member)
-        and interaction.user.guild_permissions.administrator
-    )
-
-
-def criar_embed(titulo, descricao=None):
-    embed = discord.Embed(
-        title=titulo,
-        description=descricao,
-        colour=EMBED_COLOR,
-        timestamp=datetime.now(timezone.utc)
-    )
-    return embed
-
-
-async def get_configured_channel(guild, key):
-    config = await get_config(guild.id)
-    channel_id = config.get(key)
-
-    if not channel_id:
-        return None
-
-    channel = guild.get_channel(int(channel_id))
-
-    if channel is None:
-        try:
-            channel = await guild.fetch_channel(int(channel_id))
-        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            return None
-
-    return channel
-
-
-async def get_configured_role(guild, key):
-    config = await get_config(guild.id)
-    role_id = config.get(key)
-
-    if not role_id:
-        return None
-
-    return guild.get_role(int(role_id))
-
-
-async def enviar_log(
-    guild,
-    config_key,
-    titulo,
-    descricao,
-    actor=None
-):
-    channel = await get_configured_channel(guild, config_key)
-
-    if channel is None:
-        return
-
-    embed = criar_embed(titulo, descricao)
-
-    if actor:
-        embed.set_footer(
-            text=f"Responsável: {actor}",
-            icon_url=actor.display_avatar.url
-        )
-
-    try:
-        await channel.send(embed=embed)
-    except discord.HTTPException:
-        pass
-
-# =========================================================
-# 11. NUMERAÇÃO DOS TICKETS
-# =========================================================
-
-async def next_ticket_number(guild_id):
-    async with db_pool.acquire() as conn:
-        number = await conn.fetchval("""
+        resultado = await conn.fetchrow("""
             INSERT INTO ticket_counters (
                 guild_id,
                 last_number
             )
             VALUES ($1, 1)
+
             ON CONFLICT (guild_id)
             DO UPDATE SET
                 last_number = ticket_counters.last_number + 1
-            RETURNING last_number
+
+            RETURNING last_number;
         """, guild_id)
 
-    return number
+    return resultado["last_number"]
 
 
 # =========================================================
-# 12. CONTROLE DE EQUIPE
+# 2.2 BUSCAR CONFIGURAÇÕES
 # =========================================================
 
-def membro_tem_cargo(member, role_id):
-    if not role_id:
-        return False
+async def buscar_config(guild_id: int) -> dict:
 
-    return any(
-        role.id == int(role_id)
-        for role in member.roles
-    )
+    async with db_pool.acquire() as conn:
+
+        resultado = await conn.fetchrow("""
+            SELECT data
+            FROM bot_config
+            WHERE guild_id = $1
+        """, guild_id)
+
+    if resultado:
+        return dict(resultado["data"])
+
+    return {}
 
 
-async def membro_equipe(member):
-    config = await get_config(member.guild.id)
+# =========================================================
+# 2.3 SALVAR CONFIGURAÇÕES
+# =========================================================
 
-    staff_keys = [
-        "staff_role_id",
-        "admin_role_id",
-        "director_role_id",
-        "moderator_role_id",
-        "support_role_id",
-        "partnership_role_id",
-    ]
+async def salvar_config(guild_id: int, config: dict):
+
+    async with db_pool.acquire() as conn:
+
+        await conn.execute("""
+            INSERT INTO bot_config (
+                guild_id,
+                data
+            )
+            VALUES ($1, $2::jsonb)
+
+            ON CONFLICT (guild_id)
+            DO UPDATE SET
+                data = EXCLUDED.data,
+                updated_at = NOW()
+        """, guild_id, json.dumps(config, ensure_ascii=False))
+
+
+# =========================================================
+# 2.4 REGISTRAR LOG NO BANCO
+# =========================================================
+
+async def registrar_log(
+    guild_id: int,
+    evento: str,
+    detalhes: str
+):
+
+    async with db_pool.acquire() as conn:
+
+        await conn.execute("""
+            INSERT INTO bot_logs (
+                guild_id,
+                event,
+                details
+            )
+            VALUES ($1, $2, $3)
+        """, guild_id, evento, detalhe
+
+
+
+# =========================================================
+# 03. CONFIGURAÇÕES MANUAIS
+# =========================================================
+
+CONFIG_PADRAO = {
+    "ticket_panel_channel": None,
+    "ticket_staff_role": None,
+    "ticket_transcript_channel": None,
+    "ticket_log_channel": None,
+
+    "ticket_categories": {
+        "denuncia": None,
+        "equipe": None,
+        "parceria": None,
+        "revisao": None,
+        "duvidas": None,
+        "suporte": None,
+        "bug": None
+    },
+
+    "welcome_channel": None,
+    "leave_channel": None,
+    "member_log_channel": None,
+    "moderation_log_channel": None,
+    "staff_log_channel": None,
+
+    "admin_role": None,
+    "director_role": None,
+    "moderator_role": None,
+    "support_role": None,
+
+    "blocked_words": [],
+    "warn_limit": 3
+}
+
+
+# =========================================================
+# 3.1 OBTER CONFIGURAÇÃO COMPLETA
+# =========================================================
+
+async def obter_config(guild_id: int) -> dict:
+
+    config_salva = await buscar_config(guild_id)
+
+    config = json.loads(json.dumps(CONFIG_PADRAO))
+
+    for chave, valor in config_salva.items():
+
+        if chave == "ticket_categories":
+            config["ticket_categories"].update(valor)
+
+        else:
+            config[chave] = valor
+
+    return config
+
+
+# =========================================================
+# 3.2 ALTERAR UMA CONFIGURAÇÃO
+# =========================================================
+
+async def alterar_config(
+    guild_id: int,
+    chave: str,
+    valor
+):
+
+    config = await obter_config(guild_id)
+
+    config[chave] = valor
+
+    await salvar_config(guild_id, config)
+
+    return config
+
+
+# =========================================================
+# 3.3 ALTERAR CATEGORIA DE TICKET
+# =========================================================
+
+async def alterar_categoria_ticket(
+    guild_id: int,
+    tipo: str,
+    categoria_id: int
+):
+
+    if tipo not in CONFIG_PADRAO["ticket_categories"]:
+        raise ValueError("Tipo de ticket inválido.")
+
+    config = await obter_config(guild_id)
+
+    config["ticket_categories"][tipo] = categoria_id
+
+    await salvar_config(guild_id, config)
+
+
+# =========================================================
+# 3.4 VERIFICAR EQUIPE
+# =========================================================
+
+async def membro_equipe(
+    member: discord.Member,
+    config: dict
+) -> bool:
 
     if member.guild_permissions.administrator:
         return True
 
-    return any(
-        config.get(key)
-        and membro_tem_cargo(member, config[key])
-        for key in staff_keys
-    )
+    cargos = [
+        config.get("ticket_staff_role"),
+        config.get("admin_role"),
+        config.get("director_role"),
+        config.get("moderator_role"),
+        config.get("support_role")
+    ]
+
+    cargos = [int(cargo) for cargo in cargos if cargo]
+
+    return any(role.id in cargos for role in member.roles)
 
 
 # =========================================================
-# 13. SELEÇÃO DE CANAIS
+# 3.5 ENVIAR LOG PARA CANAL CONFIGURADO
 # =========================================================
 
-class ConfigChannelSelect(discord.ui.ChannelSelect):
+async def enviar_log(
+    guild: discord.Guild,
+    chave: str,
+    embed: discord.Embed
+):
 
-    def __init__(self, config_key):
-        self.config_key = config_key
+    config = await obter_config(guild.id)
 
-        if config_key.endswith("category_id"):
-            channel_types = [discord.ChannelType.category]
-        else:
-            channel_types = [discord.ChannelType.text]
+    canal_id = config.get(chave)
 
-        super().__init__(
-            placeholder="Selecione o canal ou categoria...",
-            min_values=1,
-            max_values=1,
-            channel_types=channel_types
-        )
+    if not canal_id:
+        return
 
-    async def callback(self, interaction):
-        if not check_admin(interaction):
-            return await interaction.response.send_message(
-                "Você precisa ser administrador para alterar configurações.",
-                ephemeral=True
-            )
+    canal = guild.get_channel(int(canal_id))
 
-        selected = self.values[0]
-
-        await set_config(
-            interaction.guild.id,
-            self.config_key,
-            selected.id
-        )
-
-        await registrar_log(
-            interaction.guild.id,
-            interaction.user.id,
-            "config_channel_updated",
-            {
-                "setting": self.config_key,
-                "channel_id": selected.id
-            }
-        )
-
-        await interaction.response.send_message(
-            f"Configuração atualizada!\n"
-            f"**{CONFIG_LABELS[self.config_key]}:** {selected.mention}",
-            ephemeral=True
-        )
+    if canal:
+        try:
+            await canal.send(embed=embed)
+        except discord.Forbidden:
+            print(f"Sem permissão para enviar log em {canal.id}.")
 
 
 # =========================================================
-# 14. SELEÇÃO DE CARGOS
+# 04. SISTEMA DE CRIAÇÃO DE TICKETS
 # =========================================================
 
-class ConfigRoleSelect(discord.ui.RoleSelect):
-
-    def __init__(self, config_key):
-        self.config_key = config_key
-
-        super().__init__(
-            placeholder="Selecione o cargo...",
-            min_values=1,
-            max_values=1
-        )
-
-    async def callback(self, interaction):
-        if not check_admin(interaction):
-            return await interaction.response.send_message(
-                "Você precisa ser administrador para alterar configurações.",
-                ephemeral=True
-            )
-
-        selected = self.values[0]
-
-        await set_config(
-            interaction.guild.id,
-            self.config_key,
-            selected.id
-        )
-
-        await registrar_log(
-            interaction.guild.id,
-            interaction.user.id,
-            "config_role_updated",
-            {
-                "setting": self.config_key,
-                "role_id": selected.id
-            }
-        )
-
-        await interaction.response.send_message(
-            f"Configuração atualizada!\n"
-            f"**{CONFIG_LABELS[self.config_key]}:** {selected.mention}",
-            ephemeral=True
-        )
+TICKET_LABELS = {
+    value: label
+    for label, value in TICKET_TYPES
+}
 
 
 # =========================================================
-# 15. SELEÇÃO DO ITEM PARA CONFIGURAR
+# 4.1 VERIFICAR TICKET ABERTO
 # =========================================================
 
-class ConfigKeySelect(discord.ui.Select):
-
-    def __init__(self, group_key):
-        self.group_key = group_key
-
-        keys = CONFIG_GROUPS[group_key]["keys"]
-
-        options = [
-            discord.SelectOption(
-                label=CONFIG_LABELS[key],
-                value=key,
-                description="Clique para selecionar o item."
-            )
-            for key in keys
-        ]
-
-        super().__init__(
-            placeholder="O que deseja configurar?",
-            min_values=1,
-            max_values=1,
-            options=options
-        )
-
-    async def callback(self, interaction):
-        if not check_admin(interaction):
-            return await interaction.response.send_message(
-                "Apenas administradores podem configurar o bot.",
-                ephemeral=True
-            )
-
-        key = self.values[0]
-
-        view = discord.ui.View(timeout=300)
-
-        if key.endswith("_role_id"):
-            view.add_item(ConfigRoleSelect(key))
-        else:
-            view.add_item(ConfigChannelSelect(key))
-
-        await interaction.response.send_message(
-            f"**Configurar: {CONFIG_LABELS[key]}**\n"
-            "Selecione a opção abaixo.",
-            view=view,
-            ephemeral=True
-        )
-
-
-# =========================================================
-# 16. SELEÇÃO DA CATEGORIA DE CONFIGURAÇÃO
-# =========================================================
-
-class ConfigGroupSelect(discord.ui.Select):
-
-    def __init__(self):
-        options = [
-            discord.SelectOption(
-                label=data["label"],
-                value=key
-            )
-            for key, data in CONFIG_GROUPS.items()
-        ]
-
-        super().__init__(
-            placeholder="Selecione uma categoria de configuração...",
-            min_values=1,
-            max_values=1,
-            options=options
-        )
-
-    async def callback(self, interaction):
-        if not check_admin(interaction):
-            return await interaction.response.send_message(
-                "Apenas administradores podem configurar o bot.",
-                ephemeral=True
-            )
-
-        group_key = self.values[0]
-
-        view = discord.ui.View(timeout=300)
-        view.add_item(ConfigKeySelect(group_key))
-
-        await interaction.response.send_message(
-            f"**{CONFIG_GROUPS[group_key]['label']}**\n"
-            "Selecione o item que deseja configurar.",
-            view=view,
-            ephemeral=True
-        )
-
-
-# =========================================================
-# 17. PAINEL DE CONFIGURAÇÃO
-# =========================================================
-
-class ConfigPanelView(discord.ui.View):
-
-    def __init__(self):
-        super().__init__(timeout=300)
-        self.add_item(ConfigGroupSelect())
-
-# =========================================================
-# 18. ABERTURA E CONTROLE DE TICKETS
-# =========================================================
-
-async def criar_ticket(guild, member, category):
-    config = await get_config(guild.id)
-
-    category_id = config.get("ticket_category_id")
-    category_channel = guild.get_channel(int(category_id)) if category_id else None
-
-    if not isinstance(category_channel, discord.CategoryChannel):
-        raise ValueError("A categoria de tickets não está configurada corretamente.")
+async def buscar_ticket_aberto(
+    guild_id: int,
+    user_id: int
+):
 
     async with db_pool.acquire() as conn:
-        existing = await conn.fetchrow("""
-            SELECT channel_id
+
+        return await conn.fetchrow("""
+            SELECT *
             FROM tickets
             WHERE guild_id = $1
-              AND opener_id = $2
-              AND status = 'open'
-        """, guild.id, member.id)
+            AND user_id = $2
+            AND status = 'open'
+            LIMIT 1
+        """, guild_id, user_id)
 
-    if existing:
-        existing_channel = guild.get_channel(existing["channel_id"])
-        if existing_channel:
+
+# =========================================================
+# 4.2 CRIAR TICKET
+# =========================================================
+
+async def criar_ticket(
+    guild: discord.Guild,
+    usuario: discord.Member,
+    tipo: str
+):
+
+    if tipo not in TICKET_LABELS:
+        raise ValueError("Tipo de atendimento inválido.")
+
+    config = await obter_config(guild.id)
+
+    # Verificar categoria configurada
+    categoria_id = config["ticket_categories"].get(tipo)
+
+    if not categoria_id:
+        raise ValueError(
+            f"A categoria de **{TICKET_LABELS[tipo]}** não foi configurada."
+        )
+
+    categoria = guild.get_channel(int(categoria_id))
+
+    if not isinstance(categoria, discord.CategoryChannel):
+        raise ValueError(
+            "A categoria configurada não existe. Configure novamente."
+        )
+
+    # Impedir vários tickets abertos pelo mesmo usuário
+    ticket_existente = await buscar_ticket_aberto(
+        guild.id,
+        usuario.id
+    )
+
+    if ticket_existente:
+
+        canal_existente = guild.get_channel(
+            int(ticket_existente["channel_id"])
+        )
+
+        if canal_existente:
             raise ValueError(
-                f"Você já possui um ticket aberto: {existing_channel.mention}"
+                f"Você já possui um ticket aberto: {canal_existente.mention}"
             )
 
-    number = await next_ticket_number(guild.id)
-    ticket_name = gerar_nome_ticket(category, number)
+    # Gerar número
+    numero = await gerar_numero_ticket(guild.id)
 
-    staff_role_id = config.get("staff_role_id")
-    staff_role = guild.get_role(int(staff_role_id)) if staff_role_id else None
+    # Cargo responsável
+    cargo_id = config.get("ticket_staff_role")
 
-    overwrites = {
+    cargo_equipe = (
+        guild.get_role(int(cargo_id))
+        if cargo_id else None
+    )
+
+    # Permissões privadas
+    permissoes = {
         guild.default_role: discord.PermissionOverwrite(
             view_channel=False
         ),
-        member: discord.PermissionOverwrite(
+
+        usuario: discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
-            read_message_history=True,
             attach_files=True,
             embed_links=True
         ),
+
         guild.me: discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
             read_message_history=True,
-            manage_channels=True
+            manage_channels=True,
+            read_message_history=True,
+            attach_files=True
         )
     }
 
-    if staff_role:
-        overwrites[staff_role] = discord.PermissionOverwrite(
+    if cargo_equipe:
+        permissoes[cargo_equipe] = discord.PermissionOverwrite(
             view_channel=True,
             send_messages=True,
             read_message_history=True,
-            manage_messages=True
+            manage_messages=True,
+            attach_files=True
         )
 
-    channel = await guild.create_text_channel(
-        name=ticket_name,
-        category=category_channel,
-        overwrites=overwrites,
-        reason=f"Ticket aberto por {member}"
+    # Nome do canal
+    nome_usuario = re.sub(
+        r"[^a-z0-9-]",
+        "-",
+        usuario.name.lower()
+    )
+
+    nome_canal = f"ticket-{numero:04d}-{nome_usuario}"[:100]
+
+    # Criar canal
+    canal = await guild.create_text_channel(
+        name=nome_canal,
+        category=categoria,
+        overwrites=permissoes,
+        topic=(
+            f"Ticket #{numero:04d} | "
+            f"Usuário: {usuario.id} | "
+            f"Tipo: {tipo}"
+        ),
+        reason=f"Ticket aberto por {usuario}"
     )
 
     try:
+
+        # Registrar no banco
         async with db_pool.acquire() as conn:
+
             await conn.execute("""
                 INSERT INTO tickets (
-                    ticket_number,
                     guild_id,
                     channel_id,
-                    opener_id,
-                    category,
-                    opened_at,
+                    user_id,
+                    ticket_number,
+                    ticket_type,
                     status
                 )
-                VALUES ($1, $2, $3, $4, $5, NOW(), 'open')
-            """, number, guild.id, channel.id, member.id, category)
+                VALUES ($1, $2, $3, $4, $5, 'open')
+            """,
+                guild.id,
+                canal.id,
+                usuario.id,
+                numero,
+                tipo
+            )
+
+        # Embed de atendimento
+        embed = discord.Embed(
+            title=f"Atendimento #{numero:04d}",
+            description=(
+                f"Olá, {usuario.mention}!\n\n"
+                f"Seu atendimento foi criado com sucesso.\n\n"
+                f"**Assunto:** {TICKET_LABELS[tipo]}\n\n"
+                "Explique sua solicitação detalhadamente.\n"
+                "A equipe responderá assim que possível."
+            ),
+            color=EMBED_COLOR,
+            timestamp=datetime.now(timezone.utc)
+        )
+
+        embed.set_footer(
+            text=f"ID do usuário: {usuario.id}"
+        )
+
+        await canal.send(
+            content=(
+                f"{usuario.mention}"
+                + (
+                    f" {cargo_equipe.mention}"
+                    if cargo_equipe else ""
+                )
+            ),
+            embed=embed,
+            view=TicketControlView()
+        )
+
+        # Registrar log
+        log = discord.Embed(
+            title="Ticket criado",
+            description=(
+                f"**Número:** #{numero:04d}\n"
+                f"**Usuário:** {usuario.mention}\n"
+                f"**Tipo:** {TICKET_LABELS[tipo]}\n"
+                f"**Canal:** {canal.mention}"
+            ),
+            color=discord.Color.green(),
+            timestamp=datetime.now(timezone.utc)
+        )
+
+        await enviar_log(
+            guild,
+            "ticket_log_channel",
+            log
+        )
+
+        return canal
 
     except Exception:
-        await channel.delete(reason="Falha ao registrar ticket no banco.")
+
+        # Evitar deixar canal órfão se ocorrer falha
+        try:
+            await canal.delete(
+                reason="Falha ao concluir criação do ticket."
+            )
+        except discord.HTTPException:
+            pass
+
         raise
 
-    embed = criar_embed(
-        f"Ticket #{number:04d}",
-        f"Olá {member.mention}!\n\n"
-        f"**Categoria:** {category}\n"
-        "Explique detalhadamente como a equipe pode ajudar."
+# =========================================================
+# 05. TRANSCRIÇÕES DOS TICKETS
+# =========================================================
+
+async def gerar_transcricao(
+    canal: discord.TextChannel
+) -> discord.File:
+
+    linhas = [
+        f"Servidor: {canal.guild.name}",
+        f"Canal: {canal.name}",
+        f"ID: {canal.id}",
+        f"Data: {datetime.now(timezone.utc)}",
+        "=" * 60,
+        ""
+    ]
+
+    async for mensagem in canal.history(
+        limit=None,
+        oldest_first=True
+    ):
+
+        data = mensagem.created_at.strftime(
+            "%d/%m/%Y %H:%M:%S"
+        )
+
+        conteudo = mensagem.clean_content or "[Sem texto]"
+
+        linhas.append(
+            f"[{data}] {mensagem.author} "
+            f"({mensagem.author.id}): {conteudo}"
+        )
+
+        for anexo in mensagem.attachments:
+            linhas.append(f"Anexo: {anexo.url}")
+
+        if mensagem.embeds:
+            linhas.append(
+                f"[{len(mensagem.embeds)} embed(s)]"
+            )
+
+    arquivo = io.BytesIO(
+        "\n".join(linhas).encode("utf-8")
     )
 
-    embed.add_field(
-        name="Responsável",
-        value="Aguardando atendimento",
-        inline=False
+    return discord.File(
+        arquivo,
+        filename=f"ticket-{canal.id}.txt"
     )
 
-    await channel.send(
-        content=member.mention,
-        embed=embed,
-        view=TicketControlView()
+
+# =========================================================
+# 5.1 BUSCAR DADOS DO TICKET
+# =========================================================
+
+async def buscar_ticket(channel_id: int):
+
+    async with db_pool.acquire() as conn:
+
+        return await conn.fetchrow("""
+            SELECT *
+            FROM tickets
+            WHERE channel_id = $1
+            AND status = 'open'
+        """, channel_id)
+
+
+# =========================================================
+# 5.2 ENCERRAR TICKET
+# =========================================================
+
+async def encerrar_ticket(
+    canal: discord.TextChannel,
+    moderador: discord.Member,
+    motivo: str
+):
+
+    ticket = await buscar_ticket(canal.id)
+
+    if not ticket:
+        raise ValueError(
+            "Este canal não possui um ticket aberto."
+        )
+
+    config = await obter_config(canal.guild.id)
+
+    # Gerar transcrição
+    arquivo = await gerar_transcricao(canal)
+
+    # Enviar transcrição
+    transcript_id = config.get(
+        "ticket_transcript_channel"
+    )
+
+    transcript_channel = (
+        canal.guild.get_channel(int(transcript_id))
+        if transcript_id else None
+    )
+
+    if transcript_channel:
+
+        await transcript_channel.send(
+            content=(
+                f"Transcrição do ticket "
+                f"**#{ticket['ticket_number']:04d}**\n"
+                f"Usuário: <@{ticket['user_id']}>\n"
+                f"Encerrado por: {moderador.mention}\n"
+                f"Motivo: {motivo}"
+            ),
+            file=arquivo
+        )
+
+    else:
+
+        raise ValueError(
+            "O canal de transcrições não foi configurado. "
+            "Configure antes de encerrar o ticket."
+        )
+
+    # Atualizar banco
+    async with db_pool.acquire() as conn:
+
+        await conn.execute("""
+            UPDATE tickets
+            SET
+                status = 'closed',
+                closed_at = NOW(),
+                closed_by = $2,
+                close_reason = $3
+            WHERE channel_id = $1
+        """,
+            canal.id,
+            moderador.id,
+            motivo
+        )
+
+    # Avisar usuário por mensagem privada
+    usuario = canal.guild.get_member(
+        int(ticket["user_id"])
+    )
+
+    if usuario:
+
+        try:
+            await usuario.send(
+                f"Seu ticket **#{ticket['ticket_number']:04d}** "
+                f"em **{canal.guild.name}** foi encerrado.\n\n"
+                f"**Motivo:** {motivo}"
+            )
+        except discord.Forbidden:
+            pass
+
+    # Log
+    embed = discord.Embed(
+        title="Ticket encerrado",
+        description=(
+            f"**Número:** #{ticket['ticket_number']:04d}\n"
+            f"**Usuário:** <@{ticket['user_id']}>\n"
+            f"**Responsável:** {moderador.mention}\n"
+            f"**Motivo:** {motivo}"
+        ),
+        color=discord.Color.red(),
+        timestamp=datetime.now(timezone.utc)
     )
 
     await enviar_log(
-        guild,
-        "log_ticket_channel_id",
-        "Ticket aberto",
-        f"**Canal:** {channel.mention}\n"
-        f"**Membro:** {member.mention}\n"
-        f"**Número:** #{number:04d}"
+        canal.guild,
+        "ticket_log_channel",
+        embed
     )
 
-    return channel
+    # Excluir canal
+    await canal.delete(
+        reason=f"Ticket encerrado por {moderador}: {motivo}"
+)
 
 # =========================================================
-# 19. PAINEL DE ABERTURA DE TICKETS
+# 6. PAINEL DE TICKETS E MENU DE SELEÇÃO
 # =========================================================
 
 class TicketTypeSelect(discord.ui.Select):
-
     def __init__(self):
-        options = [
+        opcoes = [
             discord.SelectOption(
-                label=label,
-                value=value
+                label=nome,
+                value=tipo
             )
-            for label, value in TICKET_TYPES
+            for nome, tipo in TICKET_TYPES
         ]
 
         super().__init__(
             placeholder="Selecione o motivo do atendimento...",
             min_values=1,
             max_values=1,
-            options=options,
+            options=opcoes,
             custom_id="ticket:type_select"
         )
 
-    async def callback(self, interaction):
+    async def callback(self, interaction: discord.Interaction):
         if interaction.guild is None:
-            return await interaction.response.send_message(
+            await interaction.response.send_message(
                 "Este painel só funciona dentro de um servidor.",
                 ephemeral=True
             )
+            return
+
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message(
+                "Não foi possível identificar seu usuário no servidor.",
+                ephemeral=True
+            )
+            return
 
         await interaction.response.defer(ephemeral=True)
 
         try:
-            channel = await criar_ticket(
+            canal = await criar_ticket(
                 interaction.guild,
                 interaction.user,
                 self.values[0]
             )
 
             await interaction.followup.send(
-                f"Ticket criado: {channel.mention}",
+                f"Seu atendimento foi criado: {canal.mention}",
                 ephemeral=True
             )
 
-        except ValueError as error:
+        except ValueError as erro:
             await interaction.followup.send(
-                str(error),
+                str(erro),
                 ephemeral=True
             )
 
         except discord.Forbidden:
             await interaction.followup.send(
-                "Não tenho permissão para criar o canal. Verifique minhas permissões e a posição dos cargos.",
+                "Não tenho permissão para criar o ticket. Verifique minhas permissões.",
                 ephemeral=True
             )
 
         except Exception:
+            traceback.print_exc()
+
             await interaction.followup.send(
-                "Não foi possível criar seu ticket. Tente novamente mais tarde.",
+                "Ocorreu um erro ao criar seu ticket. Avise a equipe.",
                 ephemeral=True
             )
-            raise
 
 
 class TicketPanelView(discord.ui.View):
-
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(TicketTypeSelect())
 
 
-# ============================================
+def criar_embed_painel_ticket():
+    embed = discord.Embed(
+        color=EMBED_COLOR
+    )
+
+    embed.set_image(url=TICKET_IMAGE_URL)
+
+    return embed
+
+
 # =========================================================
-# 20. TRANSCRIPT DO TICKET
+# 7. CONTROLES DOS TICKETS
 # =========================================================
 
-async def gerar_transcript(channel):
-    messages = []
+class MotivoEncerramentoModal(discord.ui.Modal):
+    def __init__(self):
+        super().__init__(title="Encerrar atendimento")
 
-    async for message in channel.history(
-        limit=None,
-        oldest_first=True
-    ):
-        timestamp = message.created_at.strftime("%d/%m/%Y %H:%M:%S")
-
-        content = message.clean_content or "[Sem texto]"
-
-        if message.attachments:
-            content += "\nAnexos: " + ", ".join(
-                attachment.url for attachment in message.attachments
-            )
-
-        if message.embeds:
-            content += "\n[Mensagem contém embed]"
-
-        messages.append(
-            f"[{timestamp}] {message.author} ({message.author.id}):\n{content}"
+        self.motivo = discord.ui.TextInput(
+            label="Motivo do encerramento",
+            placeholder="Informe o motivo...",
+            required=True,
+            max_length=500
         )
 
-    transcript = "\n\n".join(messages)
+        self.add_item(self.motivo)
 
-    return discord.File(
-        io.BytesIO(transcript.encode("utf-8")),
-        filename=f"transcript-{channel.id}.txt"
-    )
-
-
-# =========================================================
-# 21. FECHAMENTO DE TICKETS
-# =========================================================
-
-async def fechar_ticket(channel, closer, reason="Sem motivo informado"):
-    async with db_pool.acquire() as conn:
-        ticket = await conn.fetchrow("""
-            SELECT *
-            FROM tickets
-            WHERE channel_id = $1
-              AND guild_id = $2
-              AND status = 'open'
-        """, channel.id, channel.guild.id)
-
-    if not ticket:
-        raise ValueError("Este canal não possui um ticket aberto registrado.")
-
-    transcript_file = await gerar_transcript(channel)
-
-    config = await get_config(channel.guild.id)
-
-    transcript_channel_id = config.get("transcript_channel_id")
-    transcript_channel = (
-        channel.guild.get_channel(int(transcript_channel_id))
-        if transcript_channel_id else None
-    )
-
-    if transcript_channel:
-        try:
-            await transcript_channel.send(
-                content=(
-                    f"Transcript do ticket **#{ticket['ticket_number']:04d}**\n"
-                    f"**Autor:** <@{ticket['opener_id']}>\n"
-                    f"**Fechado por:** {closer.mention}\n"
-                    f"**Motivo:** {reason}"
-                ),
-                file=transcript_file
-            )
-        except discord.HTTPException:
-            pass
-
-    async with db_pool.acquire() as conn:
-        await conn.execute("""
-            UPDATE tickets
-            SET status = 'closed',
-                closed_at = NOW(),
-                closer_id = $1,
-                close_reason = $2
-            WHERE channel_id = $3
-              AND guild_id = $4
-        """, closer.id, reason, channel.id, channel.guild.id)
-
-    await enviar_log(
-        channel.guild,
-        "log_ticket_channel_id",
-        "Ticket fechado",
-        f"**Número:** #{ticket['ticket_number']:04d}\n"
-        f"**Autor:** <@{ticket['opener_id']}>\n"
-        f"**Responsável:** {closer.mention}\n"
-        f"**Motivo:** {reason}"
-    )
-
-    await channel.delete(
-        reason=f"Ticket fechado por {closer}: {reason}"
-    )
-
-
-# =========================================================
-# 22. BOTÕES DE CONTROLE DOS TICKETS
-# =========================================================
-
-class TicketCloseModal(discord.ui.Modal, title="Fechar ticket"):
-
-    reason = discord.ui.TextInput(
-        label="Motivo do fechamento",
-        placeholder="Informe o motivo...",
-        required=True,
-        max_length=500
-    )
-
-    async def on_submit(self, interaction):
-        if not await membro_equipe(interaction.user):
-            return await interaction.response.send_message(
-                "Somente a equipe pode fechar este ticket.",
+    async def on_submit(self, interaction: discord.Interaction):
+        if interaction.channel is None:
+            await interaction.response.send_message(
+                "Canal não encontrado.",
                 ephemeral=True
             )
+            return
+
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message(
+                "Não foi possível identificar sua conta.",
+                ephemeral=True
+            )
+            return
+
+        config = await obter_config(interaction.guild.id)
+
+        if not membro_equipe(interaction.user, config):
+            await interaction.response.send_message(
+                "Você não tem permissão para encerrar este atendimento.",
+                ephemeral=True
+            )
+            return
 
         await interaction.response.defer(ephemeral=True)
 
         try:
-            await fechar_ticket(
+            await encerrar_ticket(
                 interaction.channel,
                 interaction.user,
-                str(self.reason)
+                str(self.motivo.value)
             )
+
             await interaction.followup.send(
-                "Ticket fechado.",
+                "Atendimento encerrado com sucesso.",
                 ephemeral=True
             )
+
         except Exception:
+            traceback.print_exc()
+
             await interaction.followup.send(
-                "Não foi possível fechar o ticket.",
+                "Não foi possível encerrar o atendimento. Verifique a configuração do canal de transcrições.",
                 ephemeral=True
             )
-            raise
 
 
 class TicketControlView(discord.ui.View):
-
     def __init__(self):
         super().__init__(timeout=None)
+
+    async def verificar_equipe(self, interaction):
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este controle só funciona dentro do servidor.",
+                ephemeral=True
+            )
+            return False
+
+        if not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message(
+                "Não foi possível identificar sua conta.",
+                ephemeral=True
+            )
+            return False
+
+        config = await obter_config(interaction.guild.id)
+
+        if not membro_equipe(interaction.user, config):
+            await interaction.response.send_message(
+                "Você não tem permissão para usar este controle.",
+                ephemeral=True
+            )
+            return False
+
+        return True
 
     @discord.ui.button(
         label="Assumir",
         emoji="🙋",
-        style=discord.ButtonStyle.primary,
-        custom_id="ticket:claim"
+        style=discord.ButtonStyle.success,
+        custom_id="ticket:assumir"
     )
-    async def claim(self, interaction, button):
-        if not await membro_equipe(interaction.user):
-            return await interaction.response.send_message(
-                "Você não faz parte da equipe.",
+    async def assumir(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        if not await self.verificar_equipe(interaction):
+            return
+
+        ticket = await buscar_ticket(interaction.channel.id)
+
+        if ticket is None:
+            await interaction.response.send_message(
+                "Este canal não possui um ticket aberto.",
                 ephemeral=True
             )
+            return
 
-        async with db_pool.acquire() as conn:
-            result = await conn.execute("""
-                UPDATE tickets
-                SET claimed_by = $1,
-                    claimed_at = NOW()
-                WHERE channel_id = $2
-                  AND guild_id = $3
-                  AND status = 'open'
-                  AND claimed_by IS NULL
-            """, interaction.user.id, interaction.channel.id, interaction.guild.id)
-
-        if result.endswith("0"):
-            return await interaction.response.send_message(
-                "Este ticket já foi assumido ou não está registrado.",
+        if ticket["claimed_by"] is not None:
+            await interaction.response.send_message(
+                "Este ticket já foi assumido por outro membro.",
                 ephemeral=True
             )
+            return
 
-        await registrar_atividade_staff(
-            interaction.guild.id,
+        await db_pool.execute(
+            """
+            UPDATE tickets
+            SET claimed_by = $1
+            WHERE channel_id = $2 AND status = 'open'
+            """,
             interaction.user.id,
-            "ticket_claimed",
-            {"channel_id": interaction.channel.id}
+            interaction.channel.id
         )
 
         await interaction.response.send_message(
-            f"Ticket assumido por {interaction.user.mention}."
+            f"🙋 Atendimento assumido por {interaction.user.mention}."
         )
 
     @discord.ui.button(
         label="Liberar",
         emoji="🔓",
         style=discord.ButtonStyle.secondary,
-        custom_id="ticket:release"
+        custom_id="ticket:liberar"
     )
-    async def release(self, interaction, button):
-        if not await membro_equipe(interaction.user):
-            return await interaction.response.send_message(
-                "Você não faz parte da equipe.",
+    async def liberar(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        if not await self.verificar_equipe(interaction):
+            return
+
+        ticket = await buscar_ticket(interaction.channel.id)
+
+        if ticket is None:
+            await interaction.response.send_message(
+                "Este canal não possui um ticket aberto.",
                 ephemeral=True
             )
+            return
 
-        async with db_pool.acquire() as conn:
-            result = await conn.execute("""
-                UPDATE tickets
-                SET claimed_by = NULL,
-                    claimed_at = NULL
-                WHERE channel_id = $1
-                  AND guild_id = $2
-                  AND status = 'open'
-                  AND claimed_by = $3
-            """, interaction.channel.id, interaction.guild.id, interaction.user.id)
-
-        if result.endswith("0"):
-            return await interaction.response.send_message(
-                "Você não assumiu este ticket.",
+        if ticket["claimed_by"] is None:
+            await interaction.response.send_message(
+                "Este ticket ainda não foi assumido.",
                 ephemeral=True
             )
+            return
+
+        if (
+            ticket["claimed_by"] != interaction.user.id
+            and not interaction.user.guild_permissions.administrator
+        ):
+            await interaction.response.send_message(
+                "Somente quem assumiu o ticket ou um administrador pode liberá-lo.",
+                ephemeral=True
+            )
+            return
+
+        await db_pool.execute(
+            """
+            UPDATE tickets
+            SET claimed_by = NULL
+            WHERE channel_id = $1 AND status = 'open'
+            """,
+            interaction.channel.id
+        )
 
         await interaction.response.send_message(
-            "Ticket liberado."
+            f"🔓 Atendimento liberado por {interaction.user.mention}."
         )
 
     @discord.ui.button(
-        label="Fechar",
+        label="Encerrar",
         emoji="🔒",
         style=discord.ButtonStyle.danger,
-        custom_id="ticket:close"
+        custom_id="ticket:encerrar"
     )
-    async def close(self, interaction, button):
-        if not await membro_equipe(interaction.user):
-            return await interaction.response.send_message(
-                "Somente a equipe pode fechar tickets.",
-                ephemeral=True
-            )
+    async def encerrar(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        if not await self.verificar_equipe(interaction):
+            return
 
-        await interaction.response.send_modal(TicketCloseModal())
-
-
+        await interaction.response.send_modal(
+            MotivoEncerramentoModal()
+        )
 # =========================================================
-# 23. SISTEMA DE PARCERIAS
+# 8. COMANDOS DE CONFIGURAÇÃO
 # =========================================================
 
-def validar_convite(link):
-    link = link.strip()
+class ConfiguracaoTickets(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
 
-    padrao = r"^(https?://)?(www\.)?(discord\.gg|discord\.com/invite)/[A-Za-z0-9-]+/?$"
-
-    return bool(re.match(padrao, link, re.IGNORECASE))
-
-
-async def solicitar_parceria(
-    guild,
-    applicant,
-    server_name,
-    invite_link,
-    description
-):
-    if not validar_convite(invite_link):
-        raise ValueError("O convite informado não parece ser válido.")
-
-    async with db_pool.acquire() as conn:
-        existing = await conn.fetchrow("""
-            SELECT id
-            FROM partnerships
-            WHERE guild_id = $1
-              AND applicant_id = $2
-              AND status = 'pending'
-        """, guild.id, applicant.id)
-
-        if existing:
-            raise ValueError("Você já possui uma parceria aguardando análise.")
-
-        partnership_id = await conn.fetchval("""
-            INSERT INTO partnerships (
-                guild_id,
-                applicant_id,
-                server_name,
-                invite_link,
-                description,
-                status
-            )
-            VALUES ($1, $2, $3, $4, $5, 'pending')
-            RETURNING id
-        """,
-            guild.id,
-            applicant.id,
-            server_name,
-            invite_link,
-            description
-        )
-
-    config = await get_config(guild.id)
-
-    category_id = config.get("partnership_category_id")
-    category = guild.get_channel(int(category_id)) if category_id else None
-
-    if not isinstance(category, discord.CategoryChannel):
-        raise ValueError("A categoria de parcerias não está configurada.")
-
-    staff_role_id = config.get("partnership_role_id") or config.get("staff_role_id")
-    staff_role = guild.get_role(int(staff_role_id)) if staff_role_id else None
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        applicant: discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True
-        ),
-        guild.me: discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True,
-            manage_channels=True
-        )
-    }
-
-    if staff_role:
-        overwrites[staff_role] = discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True
-        )
-
-    channel = await guild.create_text_channel(
-        name=f"parceria-{partnership_id}",
-        category=category,
-        overwrites=overwrites
-    )
-
-    embed = criar_embed(
-        f"Solicitação de parceria #{partnership_id}",
-        f"**Servidor:** {server_name}\n"
-        f"**Convite:** {invite_link}\n"
-        f"**Descrição:** {description or 'Não informada'}\n"
-        f"**Solicitante:** {applicant.mention}"
-    )
-
-    await channel.send(
-        content=staff_role.mention if staff_role else None,
-        embed=embed,
-        view=PartnershipReviewView(partnership_id)
-    )
-
-    return channel
-
-
-class PartnershipReviewView(discord.ui.View):
-
-    def __init__(self, partnership_id):
-        super().__init__(timeout=None)
-        self.partnership_id = partnership_id
-
-        self.add_item(PartnershipReviewButton(
-            partnership_id,
-            "approve"
-        ))
-        self.add_item(PartnershipReviewButton(
-            partnership_id,
-            "deny"
-        ))
-
-
-class PartnershipReviewButton(discord.ui.Button):
-
-    def __init__(self, partnership_id, action):
-        self.partnership_id = partnership_id
-        self.action = action
-
-        if action == "approve":
-            label = "Aprovar"
-            style = discord.ButtonStyle.success
-            emoji = "✅"
-        else:
-            label = "Recusar"
-            style = discord.ButtonStyle.danger
-            emoji = "❌"
-
-        super().__init__(
-            label=label,
-            style=style,
-            emoji=emoji,
-            custom_id=f"partnership:{action}:{partnership_id}"
-        )
-
-    async def callback(self, interaction):
-        if not await membro_equipe(interaction.user):
-            return await interaction.response.send_message(
-                "Você não tem permissão para analisar parcerias.",
+    async def verificar_admin(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Este comando só funciona dentro de um servidor.",
                 ephemeral=True
             )
+            return False
 
-        async with db_pool.acquire() as conn:
-            partnership = await conn.fetchrow("""
-                SELECT *
-                FROM partnerships
-                WHERE id = $1
-                  AND guild_id = $2
-                  AND status = 'pending'
-            """, self.partnership_id, interaction.guild.id)
-
-        if not partnership:
-            return await interaction.response.send_message(
-                "Esta solicitação já foi analisada ou não existe.",
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "Somente administradores podem alterar as configurações.",
                 ephemeral=True
             )
+            return False
 
-        if self.action == "approve":
-            config = await get_config(interaction.guild.id)
-            destination_id = config.get("partnership_channel_id")
-            destination = (
-                interaction.guild.get_channel(int(destination_id))
-                if destination_id else None
-            )
+        return True
 
-            if destination is None:
-                return await interaction.response.send_message(
-                    "Configure primeiro o canal de publicação de parcerias.",
-                    ephemeral=True
-                )
+    @app_commands.command(
+        name="configurar_categoria_ticket",
+        description="Define a categoria de um tipo de ticket."
+    )
+    @app_commands.describe(
+        tipo="Tipo de atendimento",
+        categoria="Categoria onde os tickets serão criados"
+    )
+    @app_commands.choices(
+        tipo=[
+            app_commands.Choice(name=nome, value=valor)
+            for nome, valor in TICKET_TYPES
+        ]
+    )
+    async def configurar_categoria_ticket(
+        self,
+        interaction: discord.Interaction,
+        tipo: app_commands.Choice[str],
+        categoria: discord.CategoryChannel
+    ):
+        if not await self.verificar_admin(interaction):
+            return
 
-            embed = criar_embed(
-                f"🤝 {partnership['server_name']}",
-                f"{partnership['description'] or 'Nova parceria!'}\n\n"
-                f"**Convite:** {partnership['invite_link']}"
-            )
-
-            message = await destination.send(embed=embed)
-
-            published_message_id = message.id
-            new_status = "approved"
-
-        else:
-            published_message_id = None
-            new_status = "denied"
-
-        async with db_pool.acquire() as conn:
-            await conn.execute("""
-                UPDATE partnerships
-                SET status = $1,
-                    reviewed_by = $2,
-                    reviewed_at = NOW(),
-                    published_message_id = $3
-                WHERE id = $4
-                  AND guild_id = $5
-                  AND status = 'pending'
-            """,
-                new_status,
-                interaction.user.id,
-                published_message_id,
-                self.partnership_id,
-                interaction.guild.id
-            )
+        await alterar_categoria_ticket(
+            interaction.guild.id,
+            tipo.value,
+            categoria.id
+        )
 
         await interaction.response.send_message(
-            f"Solicitação {('aprovada' if self.action == 'approve' else 'recusada')}."
+            f"Categoria de **{tipo.name}** definida para {categoria.mention}.",
+            ephemeral=True
         )
 
-        await registrar_log(
+    @app_commands.command(
+        name="configurar_cargo_equipe",
+        description="Define o cargo responsável pelos tickets."
+    )
+    async def configurar_cargo_equipe(
+        self,
+        interaction: discord.Interaction,
+        cargo: discord.Role
+    ):
+        if not await self.verificar_admin(interaction):
+            return
+
+        await alterar_config(
             interaction.guild.id,
-            interaction.user.id,
-            "partnership_reviewed",
-            {
-                "partnership_id": self.partnership_id,
-                "status": new_status
-            }
+            "ticket_staff_role",
+            cargo.id
         )
 
+        await interaction.response.send_message(
+            f"Cargo da equipe definido: {cargo.mention}.",
+            ephemeral=True
+        )
 
-# =========================================================
-# 24. CRIAÇÃO DOS CARGOS DO SISTEMA
-# =========================================================
-async def criar_cargo_sistema(guild, role_name):
-    existing = discord.utils.get(guild.roles, name=role_name)
-
-    if existing:
-        return existing, False
-
-    colour = ROLE_COLORS.get(
-        role_name,
-        discord.Colour.default()
+    @app_commands.command(
+        name="configurar_canal_painel",
+        description="Define o canal onde o painel de tickets será publicado."
     )
+    async def configurar_canal_painel(
+        self,
+        interaction: discord.Interaction,
+        canal: discord.TextChannel
+    ):
+        if not await self.verificar_admin(interaction):
+            return
 
-    role = await guild.create_role(
-        name=role_name,
-        colour=colour,
-        permissions=discord.Permissions.none(),
-        reason="Criação dos cargos do sistema"
+        await alterar_config(
+            interaction.guild.id,
+            "ticket_panel_channel",
+            canal.id
+        )
+
+        await interaction.response.send_message(
+            f"Canal do painel definido: {canal.mention}.",
+            ephemeral=True
+        )
+
+    @app_commands.command(
+        name="configurar_transcricoes",
+        description="Define o canal que receberá as transcrições."
     )
+    async def configurar_transcricoes(
+        self,
+        interaction: discord.Interaction,
+        canal: discord.TextChannel
+    ):
+        if not await self.verificar_admin(interaction):
+            return
 
-    return role, True
-
-
-async def criar_grupo_cargos(guild, group_key):
-    if group_key not in ROLE_GROUPS:
-        raise ValueError("Grupo de cargos inválido.")
-
-    created = []
-    existing = []
-
-    for role_name in ROLE_GROUPS[group_key]["roles"]:
-        role, was_created = await criar_cargo_sistema(
-            guild,
-            role_name
+        await alterar_config(
+            interaction.guild.id,
+            "ticket_transcript_channel",
+            canal.id
         )
 
-        if was_created:
-            created.append(role)
-        else:
-            existing.append(role)
-
-        async with db_pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO role_creation_history (
-                    guild_id,
-                    role_id,
-                    role_name,
-                    created_by
-                )
-                VALUES ($1, $2, $3, NULL)
-            """, guild.id, role.id, role.name)
-
-    return created, existing
-
-
-async def criar_todos_cargos(guild):
-    created = []
-    existing = []
-
-    for group_key in ROLE_GROUPS:
-        new_roles, old_roles = await criar_grupo_cargos(
-            guild,
-            group_key
+        await interaction.response.send_message(
+            f"Canal de transcrições definido: {canal.mention}.",
+            ephemeral=True
         )
 
-        created.extend(new_roles)
-        existing.extend(old_roles)
+    @app_commands.command(
+        name="configurar_log_tickets",
+        description="Define o canal de logs dos tickets."
+    )
+    async def configurar_log_tickets(
+        self,
+        interaction: discord.Interaction,
+        canal: discord.TextChannel
+    ):
+        if not await self.verificar_admin(interaction):
+            return
 
-    return created, existing
+        await alterar_config(
+            interaction.guild.id,
+            "ticket_log_channel",
+            canal.id
+        )
 
+        await interaction.response.send_message(
+            f"Canal de logs definido: {canal.mention}.",
+            ephemeral=True
+        )
 
+    @app_commands.command(
+        name="publicar_painel",
+        description="Publica o painel de atendimento no canal configurado."
+    )
+    async def publicar_painel(
+        self,
+        interaction: discord.Interaction
+    ):
+        if not await self.verificar_admin(interaction):
+            return
+
+        config = await obter_config(interaction.guild.id)
+
+        canal_id = config.get("ticket_panel_channel")
+
+        if not canal_id:
+            await interaction.response.send_message(
+                "Configure primeiro o canal com `/configurar_canal_painel`.",
+                ephemeral=True
+            )
+            return
+
+        canal = interaction.guild.get_channel(int(canal_id))
+
+        if not isinstance(canal, discord.TextChannel):
+            await interaction.response.send_message(
+                "O canal configurado não existe ou não é um canal de texto.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            await canal.send(
+                embed=criar_embed_painel_ticket(),
+                view=TicketPanelView()
+            )
+
+            await interaction.response.send_message(
+                f"Painel publicado em {canal.mention}.",
+                ephemeral=True
+            )
+
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "Não tenho permissão para enviar mensagens nesse canal.",
+                ephemeral=True
+            )
+
+    @app_commands.command(
+        name="ver_configuracao_tickets",
+        description="Mostra as configurações atuais dos tickets."
+    )
+    async def ver_configuracao_tickets(
+        self,
+        interaction: discord.Interaction
+    ):
+        if not await self.verificar_admin(interaction):
+            return
+
+        config = await obter_config(interaction.guild.id)
+
+        def mencionar_canal(chave):
+            canal_id = config.get(chave)
+            canal = interaction.guild.get_channel(int(canal_id)) if canal_id else None
+            return canal.mention if canal else "Não configurado"
+
+        cargo_id = config.get("ticket_staff_role")
+        cargo = interaction.guild.get_role(int(cargo_id)) if cargo_id else None
+
+        embed = discord.Embed(
+            title="Configuração dos Tickets",
+            color=EMBED_COLOR
+        )
+
+        embed.add_field(
+            name="Cargo da equipe",
+            value=cargo.mention if cargo else "Não configurado",
+            inline=False
+        )
+
+        embed.add_field(
+            name="Canal do painel",
+            value=mencionar_canal("ticket_panel_channel"),
+            inline=True
+        )
+
+        embed.add_field(
+            name="Transcrições",
+            value=mencionar_canal("ticket_transcript_channel"),
+            inline=True
+        )
+
+        embed.add_field(
+            name="Logs",
+            value=mencionar_canal("ticket_log_channel"),
+            inline=True
+        )
+
+        categorias = config.get("ticket_categories", {})
+
+        texto_categorias = []
+
+        for nome, tipo in TICKET_TYPES:
+            categoria_id = categorias.get(tipo)
+            categoria = (
+                interaction.guild.get_channel(int(categoria_id))
+                if categoria_id else None
+            )
+
+            texto_categorias.append(
+                f"**{nome}:** {categoria.mention if categoria else 'Não configurada'}"
+            )
+
+        embed.add_field(
+            name="Categorias",
+            value="\n".join(texto_categorias),
+            inline=False
+        )
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
 # =========================================================
-# 25. AUTOROLE PARA CONTAS DE BOT
+# 9. COMANDOS DE MODERAÇÃO
 # =========================================================
 
-async def aplicar_autorole_bot(member):
-    if not member.bot:
-        return
+class Moderacao(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
 
-    config = await get_config(member.guild.id)
-    role_id = config.get("bot_autorole_id")
+    async def registrar_moderacao(
+        self,
+        guild_id,
+        moderador_id,
+        alvo_id,
+        acao,
+        motivo
+    ):
+        await db_pool.execute(
+            """
+            INSERT INTO moderation_history
+            (guild_id, moderator_id, target_id, action, reason)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            guild_id,
+            moderador_id,
+            alvo_id,
+            acao,
+            motivo
+        )
 
-    if not role_id:
-        return
-
-    role = member.guild.get_role(int(role_id))
-
-    if role is None or role in member.roles:
-        return
-
-    bot_member = member.guild.me
-
-    if not bot_member.guild_permissions.manage_roles:
-        return
-
-    if role >= bot_member.top_role:
-        return
-
-    try:
-        await member.add_roles(
-            role,
-            reason="Cargo automático para bots"
+    async def enviar_log_moderacao(
+        self,
+        guild,
+        titulo,
+        descricao
+    ):
+        embed = discord.Embed(
+            title=titulo,
+            description=descricao,
+            color=EMBED_COLOR,
+            timestamp=datetime.now(timezone.utc)
         )
 
         await enviar_log(
-            member.guild,
-            "log_bot_channel_id",
-            "Cargo automático aplicado",
-            f"**Bot:** {member.mention}\n"
-            f"**Cargo:** {role.mention}"
+            guild,
+            "moderation_log_channel",
+            embed
         )
 
-    except discord.HTTPException:
-        pass
+    @app_commands.command(
+        name="aviso",
+        description="Aplica um aviso a um membro."
+    )
+    @app_commands.describe(
+        membro="Membro que receberá o aviso",
+        motivo="Motivo do aviso"
+    )
+    async def aviso(
+        self,
+        interaction: discord.Interaction,
+        membro: discord.Member,
+        motivo: str
+    ):
+        if not interaction.user.guild_permissions.moderate_members:
+            await interaction.response.send_message(
+                "Você não tem permissão para aplicar avisos.",
+                ephemeral=True
+            )
+            return
+
+        if membro.bot or membro.id == interaction.user.id:
+            await interaction.response.send_message(
+                "Você não pode aplicar aviso nesse membro.",
+                ephemeral=True
+            )
+            return
+
+        await self.registrar_moderacao(
+            interaction.guild.id,
+            interaction.user.id,
+            membro.id,
+            "aviso",
+            motivo
+        )
+
+        await self.enviar_log_moderacao(
+            interaction.guild,
+            "Aviso aplicado",
+            f"Membro: {membro.mention}\n"
+            f"Moderador: {interaction.user.mention}\n"
+            f"Motivo: {motivo}"
+        )
+
+        try:
+            await membro.send(
+                f"Você recebeu um aviso no servidor **{interaction.guild.name}**.\n"
+                f"Motivo: {motivo}"
+            )
+        except discord.Forbidden:
+            pass
+
+        await interaction.response.send_message(
+            f"{membro.mention} recebeu um aviso.",
+            ephemeral=True
+        )
+
+    @app_commands.command(
+        name="expulsar",
+        description="Expulsa um membro do servidor."
+    )
+    async def expulsar(
+        self,
+        interaction: discord.Interaction,
+        membro: discord.Member,
+        motivo: str
+    ):
+        if not interaction.user.guild_permissions.kick_members:
+            await interaction.response.send_message(
+                "Você não tem permissão para expulsar membros.",
+                ephemeral=True
+            )
+            return
+
+        if (
+            membro.id == interaction.user.id
+            or membro.top_role >= interaction.user.top_role
+            or membro.top_role >= interaction.guild.me.top_role
+        ):
+            await interaction.response.send_message(
+                "Não é possível expulsar esse membro por causa da hierarquia de cargos.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            await membro.kick(reason=motivo)
+
+            await self.registrar_moderacao(
+                interaction.guild.id,
+                interaction.user.id,
+                membro.id,
+                "expulsao",
+                motivo
+            )
+
+            await self.enviar_log_moderacao(
+                interaction.guild,
+                "Membro expulso",
+                f"Membro: {membro} (`{membro.id}`)\n"
+                f"Moderador: {interaction.user.mention}\n"
+                f"Motivo: {motivo}"
+            )
+
+            await interaction.followup.send(
+                f"{membro} foi expulso.",
+                ephemeral=True
+            )
+
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "Não tenho permissão para expulsar esse membro.",
+                ephemeral=True
+            )
+
+    @app_commands.command(
+        name="banir",
+        description="Bane um membro do servidor."
+    )
+    async def banir(
+        self,
+        interaction: discord.Interaction,
+        membro: discord.Member,
+        motivo: str
+    ):
+        if not interaction.user.guild_permissions.ban_members:
+            await interaction.response.send_message(
+                "Você não tem permissão para banir membros.",
+                ephemeral=True
+            )
+            return
+
+        if (
+            membro.id == interaction.user.id
+            or membro.top_role >= interaction.user.top_role
+            or membro.top_role >= interaction.guild.me.top_role
+        ):
+            await interaction.response.send_message(
+                "Não é possível banir esse membro por causa da hierarquia de cargos.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            await membro.ban(
+                reason=motivo,
+                delete_message_seconds=0
+            )
+
+            await self.registrar_moderacao(
+                interaction.guild.id,
+                interaction.user.id,
+                membro.id,
+                "banimento",
+                motivo
+            )
+
+            await self.enviar_log_moderacao(
+                interaction.guild,
+                "Membro banido",
+                f"Membro: {membro} (`{membro.id}`)\n"
+                f"Moderador: {interaction.user.mention}\n"
+                f"Motivo: {motivo}"
+            )
+
+            await interaction.followup.send(
+                f"{membro} foi banido.",
+                ephemeral=True
+            )
+
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "Não tenho permissão para banir esse membro.",
+                ephemeral=True
+            )
+
+    @app_commands.command(
+        name="desbanir",
+        description="Remove o banimento de um usuário."
+    )
+    async def desbanir(
+        self,
+        interaction: discord.Interaction,
+        usuario_id: str,
+        motivo: str = "Não informado"
+    ):
+        if not interaction.user.guild_permissions.ban_members:
+            await interaction.response.send_message(
+                "Você não tem permissão para desbanir usuários.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            user_id = int(usuario_id)
+        except ValueError:
+            await interaction.response.send_message(
+                "Informe um ID numérico válido.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            usuario = await self.bot.fetch_user(user_id)
+
+            await interaction.guild.unban(
+                usuario,
+                reason=motivo
+            )
+
+            await self.registrar_moderacao(
+                interaction.guild.id,
+                interaction.user.id,
+                usuario.id,
+                "desbanimento",
+                motivo
+            )
+
+            await self.enviar_log_moderacao(
+                interaction.guild,
+                "Usuário desbanido",
+                f"Usuário: {usuario} (`{usuario.id}`)\n"
+                f"Moderador: {interaction.user.mention}\n"
+                f"Motivo: {motivo}"
+            )
+
+            await interaction.followup.send(
+                f"{usuario} foi desbanido.",
+                ephemeral=True
+            )
+
+        except discord.NotFound:
+            await interaction.followup.send(
+                "Esse usuário não está banido.",
+                ephemeral=True
+            )
+
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "Não tenho permissão para desbanir usuários.",
+                ephemeral=True
+            )
+
+    @app_commands.command(
+        name="limpar",
+        description="Apaga mensagens de um canal."
+    )
+    @app_commands.describe(
+        quantidade="Quantidade de mensagens a apagar (1 a 100)"
+    )
+    async def limpar(
+        self,
+        interaction: discord.Interaction,
+        quantidade: app_commands.Range[int, 1, 100]
+    ):
+        if not interaction.user.guild_permissions.manage_messages:
+            await interaction.response.send_message(
+                "Você não tem permissão para apagar mensagens.",
+                ephemeral=True
+            )
+            return
+
+        if not isinstance(interaction.channel, discord.TextChannel):
+            await interaction.response.send_message(
+                "Este comando só funciona em canais de texto.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            apagadas = await interaction.channel.purge(
+                limit=quantidade
+            )
+
+            await interaction.followup.send(
+                f"{len(apagadas)} mensagens apagadas.",
+                ephemeral=True
+            )
+
+            await self.enviar_log_moderacao(
+                interaction.guild,
+                "Mensagens apagadas",
+                f"Canal: {interaction.channel.mention}\n"
+                f"Moderador: {interaction.user.mention}\n"
+                f"Quantidade: {len(apagadas)}"
+            )
+
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "Não tenho permissão para apagar mensagens.",
+                ephemeral=True
+        )
 
 # =========================================================
-# BOT E INICIALIZAÇÃO DA INSTÂNCIA
+# 10. AUTOMODERAÇÃO E EVENTOS
+# =========================================================
+
+class EventosServidor(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.guild is None or message.author.bot:
+            return
+
+        config = await obter_config(message.guild.id)
+
+        # -----------------------------------------
+        # BLOQUEIO DE PALAVRAS
+        # -----------------------------------------
+
+        palavras = config.get("blocked_words", [])
+
+        conteudo = unicodedata.normalize(
+            "NFKC",
+            message.content.lower()
+        )
+
+        for palavra in palavras:
+            if palavra.lower() in conteudo:
+                try:
+                    await message.delete()
+
+                    await message.channel.send(
+                        f"{message.author.mention}, sua mensagem foi removida por conter uma palavra bloqueada.",
+                        delete_after=8
+                    )
+
+                    await enviar_log(
+                        message.guild,
+                        "moderation_log_channel",
+                        discord.Embed(
+                            title="Automoderação: palavra bloqueada",
+                            description=(
+                                f"**Membro:** {message.author.mention}\n"
+                                f"**Canal:** {message.channel.mention}\n"
+                                f"**Palavra:** `{palavra}`"
+                            ),
+                            color=EMBED_COLOR
+                        )
+                    )
+
+                except discord.Forbidden:
+                    pass
+
+                return
+
+        # -----------------------------------------
+        # BLOQUEIO DE LINKS
+        # -----------------------------------------
+
+        if config.get("automod_links", False):
+            padrao = r"https?://\S+|discord\.gg/\S+"
+
+            if re.search(padrao, message.content, re.IGNORECASE):
+                if not message.author.guild_permissions.manage_messages:
+                    try:
+                        await message.delete()
+
+                        await message.channel.send(
+                            f"{message.author.mention}, links não são permitidos aqui.",
+                            delete_after=8
+                        )
+
+                        await enviar_log(
+                            message.guild,
+                            "moderation_log_channel",
+                            discord.Embed(
+                                title="Automoderação: link bloqueado",
+                                description=(
+                                    f"**Membro:** {message.author.mention}\n"
+                                    f"**Canal:** {message.channel.mention}"
+                                ),
+                                color=EMBED_COLOR
+                            )
+                        )
+
+                    except discord.Forbidden:
+                        pass
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        config = await obter_config(member.guild.id)
+
+        canal_id = config.get("welcome_channel")
+
+        if canal_id:
+            canal = member.guild.get_channel(int(canal_id))
+
+            if isinstance(canal, discord.TextChannel):
+                embed = discord.Embed(
+                    title="Novo membro",
+                    description=(
+                        f"Bem-vindo(a), {member.mention}!\n"
+                        f"Agora somos **{member.guild.member_count} membros**."
+                    ),
+                    color=EMBED_COLOR
+                )
+
+                embed.set_thumbnail(url=member.display_avatar.url)
+
+                await canal.send(embed=embed)
+
+        await enviar_log(
+            member.guild,
+            "member_log_channel",
+            discord.Embed(
+                title="Membro entrou",
+                description=f"{member.mention} entrou no servidor.",
+                color=EMBED_COLOR
+            )
+        )
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        config = await obter_config(member.guild.id)
+
+        canal_id = config.get("leave_channel")
+
+        if canal_id:
+            canal = member.guild.get_channel(int(canal_id))
+
+            if isinstance(canal, discord.TextChannel):
+                await canal.send(
+                    f"**{member}** saiu do servidor."
+                )
+
+        await enviar_log(
+            member.guild,
+            "member_log_channel",
+            discord.Embed(
+                title="Membro saiu",
+                description=f"**{member}** saiu do servidor.",
+                color=EMBED_COLOR
+            )
+        )
+
+    @app_commands.command(
+        name="adicionar_palavra",
+        description="Adiciona uma palavra ao filtro automático."
+    )
+    async def adicionar_palavra(
+        self,
+        interaction: discord.Interaction,
+        palavra: str
+    ):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "Somente administradores podem alterar o filtro.",
+                ephemeral=True
+            )
+            return
+
+        config = await obter_config(interaction.guild.id)
+
+        palavras = config.get("blocked_words", [])
+
+        if palavra.lower() in [p.lower() for p in palavras]:
+            await interaction.response.send_message(
+                "Essa palavra já está bloqueada.",
+                ephemeral=True
+            )
+            return
+
+        palavras.append(palavra.lower())
+
+        await alterar_config(
+            interaction.guild.id,
+            "blocked_words",
+            palavras
+        )
+
+        await interaction.response.send_message(
+            f"A palavra `{palavra}` foi adicionada ao filtro.",
+            ephemeral=True
+        )
+
+    @app_commands.command(
+        name="remover_palavra",
+        description="Remove uma palavra do filtro automático."
+    )
+    async def remover_palavra(
+        self,
+        interaction: discord.Interaction,
+        palavra: str
+    ):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "Somente administradores podem alterar o filtro.",
+                ephemeral=True
+            )
+            return
+
+        config = await obter_config(interaction.guild.id)
+
+        palavras = config.get("blocked_words", [])
+
+        palavras = [
+            p for p in palavras
+            if p.lower() != palavra.lower()
+        ]
+
+        await alterar_config(
+            interaction.guild.id,
+            "blocked_words",
+            palavras
+        )
+
+        await interaction.response.send_message(
+            f"A palavra `{palavra}` foi removida do filtro.",
+            ephemeral=True
+        )
+
+    @app_commands.command(
+        name="configurar_boas_vindas",
+        description="Define o canal de boas-vindas."
+    )
+    async def configurar_boas_vindas(
+        self,
+        interaction: discord.Interaction,
+        canal: discord.TextChannel
+    ):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "Somente administradores podem alterar essa configuração.",
+                ephemeral=True
+            )
+            return
+
+        await alterar_config(
+            interaction.guild.id,
+            "welcome_channel",
+            canal.id
+        )
+
+        await interaction.response.send_message(
+            f"Canal de boas-vindas definido: {canal.mention}.",
+            ephemeral=True
+        )
+
+    @app_commands.command(
+        name="configurar_saidas",
+        description="Define o canal de avisos de saída."
+    )
+    async def configurar_saidas(
+        self,
+        interaction: discord.Interaction,
+        canal: discord.TextChannel
+    ):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "Somente administradores podem alterar essa configuração.",
+                ephemeral=True
+            )
+            return
+
+        await alterar_config(
+            interaction.guild.id,
+            "leave_channel",
+            canal.id
+        )
+
+        await interaction.response.send_message(
+            f"Canal de saídas definido: {canal.mention}.",
+            ephemeral=True
+        )
+
+    @app_commands.command(
+        name="configurar_logs_membros",
+        description="Define o canal de logs de entrada e saída."
+    )
+    async def configurar_logs_membros(
+        self,
+        interaction: discord.Interaction,
+        canal: discord.TextChannel
+    ):
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(
+                "Somente administradores podem alterar essa configuração.",
+                ephemeral=True
+            )
+            return
+
+        await alterar_config(
+            interaction.guild.id,
+            "member_log_channel",
+            canal.id
+        )
+
+        await interaction.response.send_message(
+            f"Canal de logs de membros definido: {canal.mention}.",
+            ephemeral=True
+            )
+
+# =========================================================
+# 11. INICIALIZAÇÃO DO BOT
 # =========================================================
 
 class TicketBot(commands.Bot):
+    def __init__(self):
+        super().__init__(
+            command_prefix=PREFIX,
+            intents=intents,
+            help_command=None
+        )
+
     async def setup_hook(self):
-        await connect_database()
+        await conectar_db()
 
-        self.add_view(TicketControlView())
+        # Interfaces persistentes dos tickets
         self.add_view(TicketPanelView())
+        self.add_view(TicketControlView())
 
-        async with db_pool.acquire() as conn:
-            pendentes = await conn.fetch(
-                "SELECT id FROM partnerships WHERE status = 'pending'"
-            )
+        # Registro das classes e comandos
+        await self.add_cog(ConfiguracaoTickets(self))
+        await self.add_cog(Moderacao(self))
+        await self.add_cog(EventosServidor(self))
 
-        for parceria in pendentes:
-            self.add_view(PartnershipReviewView(parceria["id"]))
-
+        # Sincronização dos comandos slash
         await self.tree.sync()
-        print("Bot inicializado e comandos sincronizados.")
+
+        print("Banco de dados conectado.")
+        print("Interfaces persistentes carregadas.")
+        print("Comandos slash sincronizados.")
 
     async def close(self):
         global db_pool
@@ -1775,645 +2071,55 @@ class TicketBot(commands.Bot):
         await super().close()
 
 
-bot = TicketBot(
-    command_prefix=PREFIX,
-    intents=intents,
-    help_command=None
-)
-
-# =========================================================
-# 26. LISTA DINÂMICA DA EQUIPE
-# =========================================================
-
-async def atualizar_lista_equipe(guild: discord.Guild):
-    channel_id = await get_config(guild.id, "staff_list_channel_id")
-    if not channel_id:
-        return
-
-    channel = guild.get_channel(int(channel_id))
-    if not isinstance(channel, discord.TextChannel):
-        return
-
-    staff_role_ids = set()
-
-    for key in (
-        "staff_role_id",
-        "admin_role_id",
-        "director_role_id",
-        "moderator_role_id",
-        "support_role_id",
-    ):
-        value = await get_config(guild.id, key)
-        if value:
-            staff_role_ids.add(int(value))
-
-    for group in ROLE_GROUPS.values():
-        for role_name in group:
-            role = discord.utils.get(guild.roles, name=role_name)
-            if role and role_name in (
-                "Diretor Geral", "Bot Manager", "Server Manager",
-                "Admin", "Admin Jr", "Mod", "Mod Jr",
-                "Suporte", "Suporte Jr", "Criador de Eventos",
-                "Designer"
-            ):
-                staff_role_ids.add(role.id)
-
-    membros = []
-
-    for member in guild.members:
-        cargos = [
-            role.mention for role in member.roles
-            if role.id in staff_role_ids
-        ]
-
-        if cargos:
-            membros.append((member, cargos))
-
-    embed = discord.Embed(
-        title="Equipe do servidor",
-        description="Lista atualizada automaticamente.",
-        color=EMBED_COLOR
-    )
-
-    if not membros:
-        embed.description = "Nenhum membro da equipe encontrado."
-    else:
-        for member, cargos in membros[:40]:
-            embed.add_field(
-                name=member.display_name,
-                value=" ".join(cargos),
-                inline=False
-            )
-
-    message_id = await get_config(guild.id, "staff_list_message_id")
-
-    if message_id:
-        try:
-            message = await channel.fetch_message(int(message_id))
-            await message.edit(embed=embed)
-            return
-        except discord.NotFound:
-            pass
-        except discord.HTTPException:
-            pass
-
-    message = await channel.send(embed=embed)
-    await set_config(
-        guild.id,
-        "staff_list_message_id",
-        str(message.id)
-    )
-
-bot = TicketBot(
-    command_prefix=PREFIX,
-    intents=intents,
-    help_command=None
-)
-
-# =========================================================
-# 27. COMANDOS DE CONFIGURAÇÃO
-# =========================================================
-
-@bot.tree.command(
-    name="configurar",
-    description="Abre o painel de configuração do bot."
-)
-@app_commands.guild_only()
-async def configurar(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.manage_guild:
-        return await interaction.response.send_message(
-            "Você precisa da permissão Gerenciar servidor.",
-            ephemeral=True
-        )
-
-    await interaction.response.send_message(
-        "Painel de configuração:",
-        view=ConfigPanelView(),
-        ephemeral=True
-    )
-
-
-@bot.tree.command(
-    name="painel-tickets",
-    description="Publica o painel de abertura de tickets."
-)
-@app_commands.guild_only()
-async def painel_tickets(interaction: discord.Interaction):
-    if not interaction.user.guild_permissions.manage_guild:
-        return await interaction.response.send_message(
-            "Você precisa da permissão Gerenciar servidor.",
-            ephemeral=True
-        )
-
-    await interaction.response.send_message(
-        "Painel de tickets publicado.",
-        ephemeral=True
-    )
-
-    await interaction.channel.send(
-        embed=discord.Embed(
-            title="Central de atendimento",
-            description="Selecione abaixo o assunto do seu atendimento.",
-            color=EMBED_COLOR
-        ),
-        view=TicketPanelView()
-    )
-
-    await set_config(
-        interaction.guild.id,
-        "ticket_panel_channel_id",
-        str(interaction.channel.id)
-    )
-
-
-# =========================================================
-# 28. CONFIGURAÇÃO E CRIAÇÃO DE CARGOS
-# =========================================================
-
-@bot.tree.command(
-    name="configurar-cargos",
-    description="Cria os cargos padrão do servidor."
-)
-@app_commands.guild_only()
-@app_commands.describe(
-    grupo="Escolha quais cargos deseja criar."
-)
-@app_commands.choices(grupo=[
-    app_commands.Choice(name="Todos os cargos", value="todos"),
-    app_commands.Choice(name="Direção e gerenciamento", value="direcao"),
-    app_commands.Choice(name="Administração", value="administracao"),
-    app_commands.Choice(name="Moderação", value="moderacao"),
-    app_commands.Choice(name="Suporte", value="suporte"),
-    app_commands.Choice(name="Criatividade", value="criatividade"),
-    app_commands.Choice(name="Membros e comunidade", value="membros"),
-])
-async def configurar_cargos(
-    interaction: discord.Interaction,
-    grupo: app_commands.Choice[str]
-):
-    if not interaction.user.guild_permissions.manage_roles:
-        return await interaction.response.send_message(
-            "Você precisa da permissão Gerenciar cargos.",
-            ephemeral=True
-        )
-
-    await interaction.response.defer(ephemeral=True)
-
-    grupos = {
-        "direcao": ["Diretor Geral", "Bot Manager", "Server Manager"],
-        "administracao": ["Admin", "Admin Jr"],
-        "moderacao": ["Mod", "Mod Jr"],
-        "suporte": ["Suporte", "Suporte Jr"],
-        "criatividade": ["Criador de Eventos", "Designer"],
-        "membros": [
-            "Super ativo", "Iniciante", "Vip", "Parceiro",
-            "Apoiador", "Membro Antigo", "Verificado"
-        ]
-    }
-
-    if grupo.value == "todos":
-        criados = await criar_todos_cargos(interaction.guild)
-    else:
-        criados = await criar_grupo_cargos(
-            interaction.guild,
-            grupos[grupo.value]
-        )
-
-    await interaction.followup.send(
-        f"Processo concluído. {criados} cargo(s) criado(s).",
-        ephemeral=True
-    )
-
-
-# =========================================================
-# 29. COMANDO PARA SOLICITAR PARCERIA
-# =========================================================
-
-@bot.tree.command(
-    name="solicitar-parceria",
-    description="Envia uma solicitação de parceria para a equipe."
-)
-@app_commands.guild_only()
-@app_commands.describe(
-    nome="Nome do servidor",
-    convite="Convite permanente do Discord",
-    descricao="Descrição breve do servidor"
-)
-async def comando_solicitar_parceria(
-    interaction: discord.Interaction,
-    nome: str,
-    convite: str,
-    descricao: str
-):
-    await interaction.response.defer(ephemeral=True)
-
-    resultado = await solicitar_parceria(
-        interaction.guild,
-        interaction.user,
-        nome,
-        convite,
-        descricao
-    )
-
-    await interaction.followup.send(
-        resultado,
-        ephemeral=True
-    )
-
-
-# =========================================================
-# 30. COMANDOS DE MODERAÇÃO
-# =========================================================
-
-async def registrar_punicao(
-    guild_id: int,
-    user_id: int,
-    moderator_id: int,
-    action: str,
-    reason: str
-):
-    async with db_pool.acquire() as conn:
-        await conn.execute(
-            """
-            INSERT INTO moderation_history
-            (guild_id, user_id, moderator_id, action, reason, created_at)
-            VALUES ($1, $2, $3, $4, $5, NOW())
-            """,
-            guild_id,
-            user_id,
-            moderator_id,
-            action,
-            reason
-        )
-
-
-@bot.tree.command(name="expulsar", description="Expulsa um membro.")
-@app_commands.guild_only()
-@app_commands.checks.has_permissions(kick_members=True)
-async def expulsar(
-    interaction: discord.Interaction,
-    membro: discord.Member,
-    motivo: str = "Não informado"
-):
-    if membro.top_role >= interaction.user.top_role:
-        return await interaction.response.send_message(
-            "Você não pode expulsar alguém com cargo igual ou superior ao seu.",
-            ephemeral=True
-        )
-
-    await membro.kick(reason=motivo)
-
-    await registrar_punicao(
-        interaction.guild.id,
-        membro.id,
-        interaction.user.id,
-        "kick",
-        motivo
-    )
-
-    await enviar_log(
-        interaction.guild,
-        "log_punishments_channel_id",
-        f"**Expulsão:** {membro.mention}\n"
-        f"**Responsável:** {interaction.user.mention}\n"
-        f"**Motivo:** {motivo}"
-    )
-
-    await interaction.response.send_message(
-        f"{membro.mention} foi expulso.",
-        ephemeral=True
-    )
-
-
-@bot.tree.command(name="banir", description="Bane um membro.")
-@app_commands.guild_only()
-@app_commands.checks.has_permissions(ban_members=True)
-async def banir(
-    interaction: discord.Interaction,
-    membro: discord.Member,
-    motivo: str = "Não informado"
-):
-    if membro.top_role >= interaction.user.top_role:
-        return await interaction.response.send_message(
-            "Você não pode banir alguém com cargo igual ou superior ao seu.",
-            ephemeral=True
-        )
-
-    await membro.ban(reason=motivo)
-
-    await registrar_punicao(
-        interaction.guild.id,
-        membro.id,
-        interaction.user.id,
-        "ban",
-        motivo
-    )
-
-    await enviar_log(
-        interaction.guild,
-        "log_punishments_channel_id",
-        f"**Banimento:** {membro.mention}\n"
-        f"**Responsável:** {interaction.user.mention}\n"
-        f"**Motivo:** {motivo}"
-    )
-
-    await interaction.response.send_message(
-        f"{membro.mention} foi banido.",
-        ephemeral=True
-    )
-
-
-@bot.tree.command(name="timeout", description="Aplica um timeout.")
-@app_commands.guild_only()
-@app_commands.checks.has_permissions(moderate_members=True)
-@app_commands.describe(
-    membro="Membro que receberá o timeout",
-    minutos="Duração em minutos",
-    motivo="Motivo da punição"
-)
-async def timeout(
-    interaction: discord.Interaction,
-    membro: discord.Member,
-    minutos: app_commands.Range[int, 1, 40320],
-    motivo: str = "Não informado"
-):
-    if membro.top_role >= interaction.user.top_role:
-        return await interaction.response.send_message(
-            "Você não pode aplicar timeout em alguém com cargo igual ou superior ao seu.",
-            ephemeral=True
-        )
-
-    duracao = discord.utils.utcnow() + discord.timedelta(minutes=minutos)
-    await membro.timeout(duracao, reason=motivo)
-
-    await registrar_punicao(
-        interaction.guild.id,
-        membro.id,
-        interaction.user.id,
-        "timeout",
-        motivo
-    )
-
-    await enviar_log(
-        interaction.guild,
-        "log_punishments_channel_id",
-        f"**Timeout:** {membro.mention}\n"
-        f"**Duração:** {minutos} minuto(s)\n"
-        f"**Responsável:** {interaction.user.mention}\n"
-        f"**Motivo:** {motivo}"
-    )
-
-    await interaction.response.send_message(
-        f"Timeout aplicado em {membro.mention} por {minutos} minuto(s).",
-        ephemeral=True
-    )
-
-
-@bot.tree.command(name="avisar", description="Registra uma advertência.")
-@app_commands.guild_only()
-@app_commands.checks.has_permissions(moderate_members=True)
-async def avisar(
-    interaction: discord.Interaction,
-    membro: discord.Member,
-    motivo: str
-):
-    await registrar_punicao(
-        interaction.guild.id,
-        membro.id,
-        interaction.user.id,
-        "advertencia",
-        motivo
-    )
-
-    await enviar_log(
-        interaction.guild,
-        "log_punishments_channel_id",
-        f"**Advertência:** {membro.mention}\n"
-        f"**Responsável:** {interaction.user.mention}\n"
-        f"**Motivo:** {motivo}"
-    )
-
-    await interaction.response.send_message(
-        f"Advertência registrada para {membro.mention}.",
-        ephemeral=True
-    )
-
-
-@bot.tree.command(
-    name="historico-punicoes",
-    description="Consulta o histórico de punições de um membro."
-)
-@app_commands.guild_only()
-@app_commands.checks.has_permissions(moderate_members=True)
-async def historico_punicoes(
-    interaction: discord.Interaction,
-    membro: discord.User
-):
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT action, reason, moderator_id, created_at
-            FROM moderation_history
-            WHERE guild_id = $1 AND user_id = $2
-            ORDER BY created_at DESC
-            LIMIT 10
-            """,
-            interaction.guild.id,
-            membro.id
-        )
-
-    embed = discord.Embed(
-        title=f"Histórico de {membro}",
-        color=EMBED_COLOR
-    )
-
-    if not rows:
-        embed.description = "Nenhuma punição encontrada."
-    else:
-        for row in rows:
-            embed.add_field(
-                name=row["action"].upper(),
-                value=(
-                    f"**Motivo:** {row['reason']}\n"
-                    f"**Responsável:** <@{row['moderator_id']}>\n"
-                    f"**Data:** {row['created_at'].strftime('%d/%m/%Y %H:%M')}"
-                ),
-                inline=False
-            )
-
-    await interaction.response.send_message(
-        embed=embed,
-        ephemeral=True
-    )
-
-
-# =========================================================
-# 31. EVENTOS DO SERVIDOR
-# =========================================================
-
-@bot.event
-async def on_member_join(member: discord.Member):
-    if member.bot:
-        await aplicar_autorole_bot(member)
-
-        await enviar_log(
-            member.guild,
-            "log_bots_channel_id",
-            f"Bot entrou no servidor: {member.mention}"
-        )
-    else:
-        await enviar_log(
-            member.guild,
-            "log_members_channel_id",
-            f"Membro entrou: {member.mention}"
-        )
-
-    await atualizar_lista_equipe(member.guild)
+bot = TicketBot()
 
 
 @bot.event
-async def on_member_remove(member: discord.Member):
-    chave = (
-        "log_bots_channel_id"
-        if member.bot
-        else "log_members_channel_id"
-    )
-
-    tipo = "Bot saiu" if member.bot else "Membro saiu"
-
-    await enviar_log(
-        member.guild,
-        chave,
-        f"{tipo}: **{member}** (`{member.id}`)"
-    )
-
-    await atualizar_lista_equipe(member.guild)
+async def on_ready():
+    print("--------------------------------")
+    print(f"Bot conectado: {bot.user}")
+    print(f"ID: {bot.user.id}")
+    print("Sistema iniciado.")
+    print("--------------------------------")
 
 
 @bot.event
-async def on_member_update(before: discord.Member, after: discord.Member):
-    if before.nick != after.nick:
-        await enviar_log(
-            after.guild,
-            "log_members_channel_id",
-            f"**Apelido alterado:** {after.mention}\n"
-            f"Antes: `{before.nick or before.name}`\n"
-            f"Depois: `{after.nick or after.name}`"
-        )
-
-    antes = {role.id for role in before.roles}
-    depois = {role.id for role in after.roles}
-
-    adicionados = depois - antes
-    removidos = antes - depois
-
-    if adicionados or removidos:
-        texto = []
-
-        for role_id in adicionados:
-            role = after.guild.get_role(role_id)
-            if role:
-                texto.append(f"Cargo adicionado: {role.mention}")
-
-        for role_id in removidos:
-            role = after.guild.get_role(role_id)
-            if role:
-                texto.append(f"Cargo removido: {role.name}")
-
-        await enviar_log(
-            after.guild,
-            "log_roles_channel_id",
-            f"**Alteração de cargos em {after.mention}**\n"
-            + "\n".join(texto)
-        )
-
-        await atualizar_lista_equipe(after.guild)
-
-
-@bot.event
-async def on_guild_role_create(role: discord.Role):
-    await enviar_log(
-        role.guild,
-        "log_roles_channel_id",
-        f"Cargo criado: {role.mention}"
-    )
-
-
-@bot.event
-async def on_guild_role_delete(role: discord.Role):
-    await enviar_log(
-        role.guild,
-        "log_roles_channel_id",
-        f"Cargo excluído: **{role.name}**"
-    )
-
-
-@bot.event
-async def on_guild_role_update(before: discord.Role, after: discord.Role):
-    if before.name != after.name or before.permissions != after.permissions:
-        await enviar_log(
-            after.guild,
-            "log_roles_channel_id",
-            f"Cargo atualizado: {before.name} → {after.name}"
-        )
-
-
-@bot.event
-async def on_guild_channel_create(channel):
-    if channel.guild:
-        await enviar_log(
-            channel.guild,
-            "log_server_channel_id",
-            f"Canal criado: {channel.mention}"
-        )
-
-
-@bot.event
-async def on_guild_channel_delete(channel):
-    if channel.guild:
-        await enviar_log(
-            channel.guild,
-            "log_server_channel_id",
-            f"Canal excluído: **{channel.name}**"
-        )
-
-
-# =========================================================
-# 32. TRATAMENTO DE ERROS DOS COMANDOS
-# =========================================================
-
-@bot.tree.error
-async def tratar_erro_comando(
+async def on_app_command_error(
     interaction: discord.Interaction,
     error: app_commands.AppCommandError
 ):
+    traceback.print_exception(
+        type(error),
+        error,
+        error.__traceback__
+    )
+
+    mensagem = "Ocorreu um erro ao executar esse comando."
+
     if isinstance(error, app_commands.MissingPermissions):
-        mensagem = "Você não possui permissão para usar esse comando."
-    elif isinstance(error, app_commands.BotMissingPermissions):
-        mensagem = "O bot não possui as permissões necessárias."
+        mensagem = "Você não possui as permissões necessárias."
+
     elif isinstance(error, app_commands.CommandOnCooldown):
-        mensagem = "Aguarde um pouco antes de usar esse comando novamente."
-    else:
-        print(f"Erro em comando slash: {repr(error)}")
-        mensagem = "Ocorreu um erro ao executar o comando."
+        mensagem = "Aguarde antes de utilizar esse comando novamente."
 
-    if interaction.response.is_done():
-        await interaction.followup.send(
-            mensagem,
-            ephemeral=True
-        )
-    else:
-        await interaction.response.send_message(
-            mensagem,
-            ephemeral=True
-        )
-
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(
+                mensagem,
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                mensagem,
+                ephemeral=True
+            )
+    except discord.HTTPException:
+        pass
 
 
 # =========================================================
-# 34. EXECUÇÃO
+# 12. EXECUÇÃO
 # =========================================================
 
 if __name__ == "__main__":
     bot.run(TOKEN)
-        
