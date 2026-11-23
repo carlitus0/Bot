@@ -1482,7 +1482,7 @@ class TicketControlView(discord.ui.View):
 
 class TicketBot(commands.Bot):
     async def setup_hook(self):
-        await conectar_db()
+        await connect_database()
 
         self.add_view(TicketPanelView())
         self.add_view(TicketControlView())
