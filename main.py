@@ -121,7 +121,7 @@ async def connect_database():
             )
         """)
 
-    print("Conexão com Supabase estabelecida.")
+    print("Conexão com Supabase estabelecida.", flush=True)
 
 
 async def next_ticket_number():
@@ -708,7 +708,7 @@ class CloseReasonModal(
 
             await opener.send(embed=dm_embed)
 
-        except (discord.Forbidden, discord.HTTPException):
+        except (discord.Forbidden, discord.HTTPException, AttributeError):
             pass
 
         await interaction.followup.send(
@@ -716,4 +716,125 @@ class CloseReasonModal(
             ephemeral=True
         )
 
-        a
+        await asyncio.sleep(3)
+
+        await channel.delete(
+            reason=f"Ticket fechado por {closer}"
+        )
+
+
+class TicketControlView(discord.ui.View):
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Fechar atendimento",
+        emoji="🔒",
+        style=discord.ButtonStyle.secondary,
+        custom_id="ticket:close"
+    )
+    async def close_button(self, interaction, button):
+        await interaction.response.send_modal(
+            CloseReasonModal()
+        )
+
+
+# ==========================================
+# BOT E COMANDO DO PAINEL
+# ==========================================
+
+class TicketBot(commands.Bot):
+
+    async def setup_hook(self):
+        await connect_database()
+
+        self.add_view(TicketPanelView())
+        self.add_view(TicketControlView())
+
+        await self.tree.sync()
+
+    async def close(self):
+        if db_pool:
+            await db_pool.close()
+
+        await super().close()
+
+
+bot = TicketBot(
+    command_prefix="!",
+    intents=intents
+)
+
+
+@bot.tree.command(
+    name="painel-ticket",
+    description="Envia o painel da Central de Atendimento."
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def painel_ticket(interaction: discord.Interaction):
+
+    embed = discord.Embed(
+        title=PANEL_TITLE,
+        description=PANEL_DESCRIPTION,
+        color=EMBED_COLOR
+    )
+
+    embed.set_image(url=PANEL_IMAGE)
+
+    embed.set_footer(
+        text="Selecione uma opção abaixo para começar."
+    )
+
+    await interaction.channel.send(
+        embed=embed,
+        view=TicketPanelView()
+    )
+
+    await interaction.response.send_message(
+        "Painel enviado com sucesso.",
+        ephemeral=True
+    )
+
+
+@painel_ticket.error
+async def painel_ticket_error(interaction, error):
+
+    if isinstance(error, app_commands.MissingPermissions):
+        message = "Você precisa ser administrador."
+    else:
+        message = "Ocorreu um erro ao enviar o painel."
+
+    if interaction.response.is_done():
+        await interaction.followup.send(
+            message,
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            message,
+            ephemeral=True
+        )
+
+
+@bot.event
+async def on_ready():
+    print(f"Bot conectado como {bot.user}", flush=True)
+    print("Sistema de tickets iniciado.", flush=True)
+
+
+# ==========================================
+# INICIALIZAÇÃO
+# ==========================================
+
+if not TOKEN:
+    raise RuntimeError("DISCORD_TOKEN não configurado.")
+
+if not DB_PASSWORD:
+    raise RuntimeError("SUPABASE_DB_PASSWORD não configurada.")
+
+print("MAIN.PY FOI INICIADO", flush=True)
+print("INICIANDO BOT DO DISCORD...", flush=True)
+
+bot.run(TOKEN)
+    
