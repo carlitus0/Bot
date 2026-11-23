@@ -825,7 +825,51 @@ async def criar_ticket(
             timestamp=datetime.now(timezone.utc)
         )
 
+        
         embed.set_footer(
+            text=(
+                f"Central de Atendimento • "
+                f"Ticket #{numero:04d} • ID: {usuario.id}"
+            )
+        )
+
+        # Enviar mensagem
+        await canal.send(
+            embed=embed,
+            view=TicketControlView()
+        )
+
+        # Registrar log
+        await registrar_log(
+            guild.id,
+            "ticket_criado",
+            f"Ticket #{numero:04d} criado por {usuario} "
+            f"({usuario.id}). Tipo: {tipo}. Canal: {canal.id}"
+        )
+
+        return canal
+
+    except Exception:
+        if canal is not None:
+            try:
+                async with db_pool.acquire() as conn:
+                    await conn.execute(
+                        """
+                        DELETE FROM tickets
+                        WHERE channel_id = $1
+                        """,
+                        canal.id
+                    )
+
+                await canal.delete(
+                    reason="Falha durante a criação do ticket."
+                )
+
+            except Exception:
+                pass
+
+        raise
+        
 
 # =========================================================
 # 4.2 CRIAR TICKET
