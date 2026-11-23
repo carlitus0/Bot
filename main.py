@@ -569,8 +569,7 @@ async def criar_ticket(
                 numero,
                 tipo
             )
-
-                        embed = discord.Embed(
+        embed = discord.Embed
             title=f"Central de Atendimento • #{numero:04d}",
             description=(
                 f"Olá, {usuario.mention}! Seja bem-vindo(a) à nossa central de atendimento.\n\n"
