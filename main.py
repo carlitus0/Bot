@@ -719,31 +719,197 @@ async def criar_ticket(
         )
 
         embed.set_footer(
-            text=f"ID do usuário: {usuario.id}"
+
+# =========================================================
+# 4.2 CRIAR TICKET
+# =========================================================
+
+async def criar_ticket(
+    guild: discord.Guild,
+    usuario: discord.Member,
+    tipo: str
+):
+    if tipo not in TICKET_LABELS:
+        raise ValueError("Tipo de atendimento inválido.")
+
+    config = await obter_config(guild.id)
+
+    ticket_existente = await buscar_ticket_aberto(
+        guild.id,
+        usuario.id
+    )
+
+    if ticket_existente:
+        canal_existente = guild.get_channel(
+            ticket_existente["channel_id"]
         )
 
-        await canal.send(
-            content=usuario.mention,
-            embed=embed,
-            view=TicketControlView()
+        if canal_existente:
+            raise ValueError(
+                f"Você já possui um atendimento aberto: {canal_existente.mention}"
+            )
+
+    # Buscar categoria
+    categorias = config.get("ticket_categories", {})
+    categoria_id = categorias.get(tipo)
+
+    if not categoria_id:
+        raise ValueError(
+            "A categoria deste tipo de ticket não foi configurada."
         )
 
-        log = discord.Embed(
-            title="Novo ticket criado",
+    categoria = guild.get_channel(int(categoria_id))
+
+    if not isinstance(categoria, discord.CategoryChannel):
+        raise ValueError(
+            "A categoria configurada não foi encontrada."
+        )
+
+    # Gerar número
+    numero = await gerar_numero_ticket(guild.id)
+
+    # Buscar cargo da equipe
+    cargo_equipe = None
+    cargo_id = config.get("ticket_staff_role")
+
+    if cargo_id:
+        cargo_equipe = guild.get_role(int(cargo_id))
+
+    # Nome do canal
+    nome_usuario = re.sub(
+        r"[^a-z0-9-]",
+        "-",
+        usuario.name.lower()
+    )
+
+    nome_canal = f"ticket-{numero:04d}-{nome_usuario}"[:100]
+
+    # Permissões
+    permissoes = {
+        guild.default_role: discord.PermissionOverwrite(
+            view_channel=False
+        ),
+        usuario: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            attach_files=True
+        )
+    }
+
+    if guild.me:
+        permissoes[guild.me] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            manage_channels=True,
+            manage_messages=True,
+            attach_files=True
+        )
+
+    if cargo_equipe:
+        permissoes[cargo_equipe] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            manage_messages=True,
+            attach_files=True
+        )
+
+    canal = None
+
+    try:
+        # Criar canal
+        canal = await guild.create_text_channel(
+            name=nome_canal,
+            category=categoria,
+            overwrites=permissoes,
+            topic=(
+                f"Ticket #{numero:04d} | "
+                f"Usuário: {usuario.id} | "
+                f"Tipo: {tipo}"
+            ),
+            reason=f"Ticket aberto por {usuario}"
+        )
+
+        # Registrar no banco
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO tickets (
+                    guild_id,
+                    channel_id,
+                    user_id,
+                    ticket_number,
+                    ticket_type,
+                    status
+                )
+                VALUES ($1, $2, $3, $4, $5, 'open')
+                """,
+                guild.id,
+                canal.id,
+                usuario.id,
+                numero,
+                tipo
+            )
+
+        # Mensagem do atendimento
+        embed = discord.Embed(
+            title=f"Central de Atendimento • #{numero:04d}",
             description=(
-                f"**Número:** #{numero:04d}\n"
-                f"**Usuário:** {usuario.mention}\n"
-                f"**Tipo:** {TICKET_LABELS[tipo]}\n"
-                f"**Canal:** {canal.mention}"
+                f"Olá, {usuario.mention}! Seja bem-vindo(a) à nossa "
+                "central de atendimento.\n\n"
+
+                "Seu atendimento foi iniciado com sucesso. "
+                "Este canal será utilizado para acompanhar sua "
+                "solicitação e manter toda a comunicação organizada.\n\n"
+
+                "**INFORMAÇÕES DO ATENDIMENTO**\n"
+                f"> **Número:** #{numero:04d}\n"
+                f"> **Assunto:** {TICKET_LABELS[tipo]}\n"
+                f"> **Solicitante:** {usuario.mention}\n\n"
+
+                "**COMO PROSSEGUIR?**\n"
+                "• Descreva sua solicitação de maneira clara e objetiva.\n"
+                "• Apresente todos os detalhes relevantes para a equipe.\n"
+                "• Caso necessário, envie imagens ou arquivos "
+                "que ajudem na análise.\n"
+                "• Aguarde a disponibilidade de um membro responsável.\n\n"
+
+                "**ORIENTAÇÕES IMPORTANTES**\n"
+                "Mantenha a comunicação neste canal e evite enviar "
+                "mensagens repetidas ou marcar membros da equipe "
+                "sem necessidade.\n\n"
+
+                "Todas as solicitações serão analisadas pela equipe "
+                "conforme a disponibilidade e a natureza do assunto.\n\n"
+
+                "Agradecemos por entrar em contato. "
+                "Estamos à disposição para ajudá-lo!"
             ),
             color=EMBED_COLOR,
             timestamp=datetime.now(timezone.utc)
         )
 
-        await enviar_log(
-            guild,
-            "ticket_log_channel",
-            log
+        embed.set_footer(
+            text=(
+                f"Central de Atendimento • "
+                f"Ticket #{numero:04d} • ID: {usuario.id}"
+            )
+        )
+
+        # Enviar mensagem
+        await canal.send(
+            embed=embed,
+            view=TicketControlView()
+        )
+
+        # Registrar log
+        await registrar_log(
+            guild.id,
+            "ticket_criado",
+            f"Ticket #{numero:04d} criado por {usuario} "
+            f"({usuario.id}). Tipo: {tipo}. Canal: {canal.id}"
         )
 
         return canal
@@ -751,21 +917,24 @@ async def criar_ticket(
     except Exception:
         if canal is not None:
             try:
+                async with db_pool.acquire() as conn:
+                    await conn.execute(
+                        """
+                        DELETE FROM tickets
+                        WHERE channel_id = $1
+                        """,
+                        canal.id
+                    )
+
                 await canal.delete(
-                    reason="Falha ao concluir criação do ticket."
+                    reason="Falha durante a criação do ticket."
                 )
-            except discord.HTTPException:
+
+            except Exception:
                 pass
 
-            await db_pool.execute(
-                """
-                DELETE FROM tickets
-                WHERE channel_id = $1
-                """,
-                canal.id
-            )
-
         raise
+
 # =========================================================
 # 05. TRANSCRIÇÕES DOS TICKETS
 # =========================================================
