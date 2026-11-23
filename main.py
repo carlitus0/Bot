@@ -1743,6 +1743,44 @@ async def aplicar_autorole_bot(member):
         pass
 
 # =========================================================
+# BOT E INICIALIZAÇÃO DA INSTÂNCIA
+# =========================================================
+
+class TicketBot(commands.Bot):
+    async def setup_hook(self):
+        await connect_database()
+
+        self.add_view(TicketControlView())
+        self.add_view(TicketPanelView())
+
+        async with db_pool.acquire() as conn:
+            pendentes = await conn.fetch(
+                "SELECT id FROM partnerships WHERE status = 'pending'"
+            )
+
+        for parceria in pendentes:
+            self.add_view(PartnershipReviewView(parceria["id"]))
+
+        await self.tree.sync()
+        print("Bot inicializado e comandos sincronizados.")
+
+    async def close(self):
+        global db_pool
+
+        if db_pool is not None:
+            await db_pool.close()
+            db_pool = None
+
+        await super().close()
+
+
+bot = TicketBot(
+    command_prefix=PREFIX,
+    intents=intents,
+    help_command=None
+)
+
+# =========================================================
 # 26. LISTA DINÂMICA DA EQUIPE
 # =========================================================
 
@@ -2369,59 +2407,6 @@ async def tratar_erro_comando(
             ephemeral=True
         )
 
-
-# =========================================================
-# 33. BOT E INICIALIZAÇÃO
-# =========================================================
-
-class TicketBot(commands.Bot):
-    async def setup_hook(self):
-        await connect_database()
-
-        # Views persistentes
-        self.add_view(TicketControlView())
-        self.add_view(TicketPanelView())
-
-        # Recupera os painéis de análise de parceria pendentes
-        async with db_pool.acquire() as conn:
-            pendentes = await conn.fetch(
-                "SELECT id FROM partnerships WHERE status = 'pending'"
-            )
-
-        for parceria in pendentes:
-            self.add_view(
-                PartnershipReviewView(parceria["id"])
-            )
-
-        await self.tree.sync()
-
-        print("Banco de dados conectado.")
-        print("Views persistentes carregadas.")
-        print("Comandos slash sincronizados.")
-
-    async def close(self):
-        global db_pool
-
-        if db_pool is not None:
-            await db_pool.close()
-            db_pool = None
-
-        await super().close()
-
-
-
-
-@bot.event
-async def on_ready():
-    print(f"Bot conectado como {bot.user}")
-
-    for guild in bot.guilds:
-        try:
-            await atualizar_lista_equipe(guild)
-        except Exception as error:
-            print(
-                f"Erro ao atualizar equipe de {guild.name}: {error}"
-            )
 
 
 # =========================================================
