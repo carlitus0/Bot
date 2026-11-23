@@ -50,7 +50,10 @@ TICKET_TYPES = [
 ]
 
 EMBED_COLOR = discord.Colour.from_rgb(128, 128, 128)
-
+intents = discord.Intents.default()
+intents.guilds = True
+intents.members = True
+intents.message_content = True
 
 # ==========================================
 # BANCO DE DADOS SUPABASE
