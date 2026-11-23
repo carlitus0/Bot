@@ -643,8 +643,6 @@ class TicketControlView(discord.ui.View):
 # ==========================================
 # COMANDO DO PAINEL
 # ==========================================
-
-@bot_tree_command_placeholder
 # ==========================================
 # BOT E COMANDO DO PAINEL
 # ==========================================
@@ -667,12 +665,8 @@ class TicketBot(commands.Bot):
 
 bot = TicketBot(
     command_prefix="!",
-    intents=discord.Intents.default()
+    intents=intents
 )
-
-bot.intents.guilds = True
-bot.intents.members = True
-bot.intents.message_content = True
 
 
 @bot.tree.command(
@@ -705,26 +699,17 @@ async def painel_ticket(interaction: discord.Interaction):
 
 
 @painel_ticket.error
-async def painel_ticket_error(
-    interaction: discord.Interaction,
-    error: app_commands.AppCommandError
-):
+async def painel_ticket_error(interaction, error):
 
     if isinstance(error, app_commands.MissingPermissions):
-        message = "Você precisa ser administrador para usar este comando."
+        message = "Você precisa ser administrador."
     else:
         message = "Ocorreu um erro ao enviar o painel."
 
     if interaction.response.is_done():
-        await interaction.followup.send(
-            message,
-            ephemeral=True
-        )
+        await interaction.followup.send(message, ephemeral=True)
     else:
-        await interaction.response.send_message(
-            message,
-            ephemeral=True
-        )
+        await interaction.response.send_message(message, ephemeral=True)
 
 
 @bot.event
@@ -734,13 +719,9 @@ async def on_ready():
 
 
 if not TOKEN:
-    raise RuntimeError(
-        "A variável DISCORD_TOKEN não foi configurada."
-    )
+    raise RuntimeError("DISCORD_TOKEN não configurado.")
 
 if not DB_PASSWORD:
-    raise RuntimeError(
-        "A variável SUPABASE_DB_PASSWORD não foi configurada."
-    )
+    raise RuntimeError("SUPABASE_DB_PASSWORD não configurada.")
 
 bot.run(TOKEN)
