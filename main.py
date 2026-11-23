@@ -1086,7 +1086,6 @@ async def criar_ticket(guild, member, category):
 
     return channel
 
-
 # =========================================================
 # 19. PAINEL DE ABERTURA DE TICKETS
 # =========================================================
@@ -1106,7 +1105,8 @@ class TicketTypeSelect(discord.ui.Select):
             placeholder="Selecione o motivo do atendimento...",
             min_values=1,
             max_values=1,
-            options=options
+            options=options,
+            custom_id="ticket:type_select"
         )
 
     async def callback(self, interaction):
@@ -1157,6 +1157,7 @@ class TicketPanelView(discord.ui.View):
         self.add_item(TicketTypeSelect())
 
 
+# ============================================
 # =========================================================
 # 20. TRANSCRIPT DO TICKET
 # =========================================================
