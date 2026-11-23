@@ -243,20 +243,20 @@ async def registrar_log(
     evento: str,
     detalhes: str
 ):
-
     async with db_pool.acquire() as conn:
-
-        await conn.execute("""
+        await conn.execute(
+            """
             INSERT INTO bot_logs (
                 guild_id,
                 event,
                 details
             )
             VALUES ($1, $2, $3)
-        """, guild_id, evento, detalhe
-
-
-
+            """,
+            guild_id,
+            evento,
+            detalhes
+        )
 # =========================================================
 # 03. CONFIGURAÇÕES MANUAIS
 # =========================================================
