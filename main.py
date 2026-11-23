@@ -570,31 +570,31 @@ async def criar_ticket(
                 tipo
             )
 
-        # Embed de atendimento
-        embed = discord.Embed(
-            title=f"Atendimento #{numero:04d}",
+                        embed = discord.Embed(
+            title=f"Central de Atendimento • #{numero:04d}",
             description=(
-                f"Olá, {usuario.mention}!\n\n"
-                f"Seu atendimento foi criado com sucesso.\n\n"
-                f"**Assunto:** {TICKET_LABELS[tipo]}\n\n"
-                "Explique sua solicitação detalhadamente.\n"
-                "A equipe responderá assim que possível."
+                f"Olá, {usuario.mention}! Seja bem-vindo(a) à nossa central de atendimento.\n\n"
+                "Seu ticket foi criado com sucesso e nossa equipe já poderá visualizar sua solicitação.\n\n"
+                f"**Assunto do atendimento:**\n"
+                f"> {TICKET_LABELS[tipo]}\n\n"
+                "**Como prosseguir?**\n"
+                "• Explique sua situação com o máximo de detalhes possível.\n"
+                "• Envie imagens, vídeos ou arquivos caso sejam necessários para entender o problema.\n"
+                "• Aguarde até que um membro da equipe esteja disponível para atendê-lo.\n\n"
+                "**Informações importantes:**\n"
+                "Evite enviar mensagens repetidas ou marcar os membros da equipe sem necessidade. "
+                "Isso ajuda a manter o atendimento organizado e permite que todas as solicitações "
+                "sejam respondidas adequadamente.\n\n"
+                "Agradecemos pela sua paciência e colaboração. "
+                "Nossa equipe fará o possível para ajudá-lo!"
             ),
             color=EMBED_COLOR,
             timestamp=datetime.now(timezone.utc)
         )
 
         embed.set_footer(
-            text=f"ID do usuário: {usuario.id}"
+            text=f"Central de Atendimento • Ticket #{numero:04d} • ID: {usuario.id}"
         )
-
-        await canal.send(
-            content=(
-                f"{usuario.mention}"
-                + (
-                    f" {cargo_equipe.mention}"
-                    if cargo_equipe else ""
-                )
 # =========================================================
 # 4.2 CRIAR TICKET
 # =========================================================
