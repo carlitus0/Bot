@@ -726,8 +726,8 @@ class TicketControlView(discord.ui.View):
 
     def __init__(self):
         super().__init__(timeout=None)
-
-    @discord.ui.button(
+        
+  @discord.ui.button(
         label="Fechar atendimento",
         emoji="🔒",
         style=discord.ButtonStyle.danger,
@@ -779,7 +779,9 @@ class TicketBot(commands.Bot):
             intents=intents,
             help_command=None
         )
-
+        # Carregar sistemas externos
+        await self.load_extension("sistemas")
+        
     async def setup_hook(self):
 
         # Conectar ao Supabase
