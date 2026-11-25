@@ -779,13 +779,14 @@ class TicketBot(commands.Bot):
             intents=intents,
             help_command=None
         )
-        # Carregar sistemas externos
-        await self.load_extension("sistemas")
-        
+
     async def setup_hook(self):
 
         # Conectar ao Supabase
         await connect_database()
+
+        # Carregar sistemas externos
+        await self.load_extension("sistemas")
 
         # Registrar views persistentes
         self.add_view(TicketPanelView())
@@ -799,7 +800,6 @@ class TicketBot(commands.Bot):
 
 
 bot = TicketBot()
-
 
 # ==========================================
 # COMANDO PARA PUBLICAR O PAINEL
