@@ -787,6 +787,8 @@ class TicketBot(commands.Bot):
         # Carregar sistemas externos
         await self.load_extension("sistemas")
 
+        await self.load_extension("comandos_extra")
+
         # Registrar views persistentes
         self.add_view(TicketPanelView())
         self.add_view(TicketControlView())
