@@ -726,8 +726,8 @@ class TicketControlView(discord.ui.View):
 
     def __init__(self):
         super().__init__(timeout=None)
-        
-  @discord.ui.button(
+
+    @discord.ui.button(
         label="Fechar atendimento",
         emoji="🔒",
         style=discord.ButtonStyle.danger,
@@ -765,8 +765,6 @@ class TicketControlView(discord.ui.View):
         await interaction.response.send_modal(
             CloseReasonModal()
         )
-
-
 # ==========================================
 # BOT
 # ==========================================
